@@ -12,7 +12,7 @@ import {
 interface PlatformData {
   name: string;
   value: number;
-  color: string;
+  color?: string;
 }
 
 interface PlatformBreakdownProps {
