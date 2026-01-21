@@ -161,13 +161,17 @@ class AnalysisRunner:
         response = await adapter.execute_query(question.question_text)
 
         # Create execution record
+        # Store tokens in response_metadata since tokens_used is not a column
+        metadata = response.raw_response or {}
+        if response.tokens_used:
+            metadata["tokens_used"] = response.tokens_used
+
         execution = QueryExecution(
             question_id=question.id,
             platform=platform,
             raw_response=response.content,
-            response_metadata=response.raw_response,
+            response_metadata=metadata,
             status="completed" if response.content else "failed",
-            tokens_used=response.tokens_used,
             response_time_ms=response.response_time_ms
         )
         db.add(execution)
