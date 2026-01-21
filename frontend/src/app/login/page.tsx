@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { BarChart3 } from "lucide-react";
 import { Button } from "@/components/ui/Button";
@@ -10,6 +10,7 @@ import Script from "next/script";
 declare global {
   interface Window {
     google: any;
+    handleGoogleCredentialResponse: (response: any) => void;
   }
 }
 
@@ -20,38 +21,54 @@ export default function LoginPage() {
   const [fullName, setFullName] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
+  const [scriptLoaded, setScriptLoaded] = useState(false);
   const router = useRouter();
+  const googleButtonRef = useRef<HTMLDivElement>(null);
 
   const googleClientId = process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID?.trim();
 
+  // Define callback on window object so it persists after popup closes
   useEffect(() => {
-    // Initialize Google Sign-In when script is loaded
-    if (window.google && googleClientId) {
-      window.google.accounts.id.initialize({
-        client_id: googleClientId,
-        callback: handleGoogleResponse,
-      });
-      window.google.accounts.id.renderButton(
-        document.getElementById("google-signin-btn"),
-        { theme: "outline", size: "large", width: "100%" }
-      );
-    }
-  }, [googleClientId]);
+    window.handleGoogleCredentialResponse = async (response: any) => {
+      setError("");
+      setLoading(true);
+      try {
+        const data = await authApi.googleAuth(response.credential);
+        localStorage.setItem("access_token", data.access_token);
+        localStorage.setItem("refresh_token", data.refresh_token);
+        router.push("/dashboard");
+      } catch (err: any) {
+        console.error("Google auth error:", err);
+        setError(err.response?.data?.detail || "Google sign-in failed");
+        setLoading(false);
+      }
+    };
 
-  const handleGoogleResponse = async (response: any) => {
-    setError("");
-    setLoading(true);
-    try {
-      const data = await authApi.googleAuth(response.credential);
-      localStorage.setItem("access_token", data.access_token);
-      localStorage.setItem("refresh_token", data.refresh_token);
-      router.push("/dashboard");
-    } catch (err: any) {
-      setError(err.response?.data?.detail || "Google sign-in failed");
-    } finally {
-      setLoading(false);
+    return () => {
+      delete (window as any).handleGoogleCredentialResponse;
+    };
+  }, [router]);
+
+  // Initialize Google Sign-In when script is loaded
+  useEffect(() => {
+    if (scriptLoaded && window.google && googleClientId && googleButtonRef.current) {
+      try {
+        window.google.accounts.id.initialize({
+          client_id: googleClientId,
+          callback: window.handleGoogleCredentialResponse,
+          ux_mode: "popup",
+        });
+        window.google.accounts.id.renderButton(googleButtonRef.current, {
+          theme: "outline",
+          size: "large",
+          width: 320,
+          text: "signin_with",
+        });
+      } catch (err) {
+        console.error("Google Sign-In initialization error:", err);
+      }
     }
-  };
+  }, [scriptLoaded, googleClientId]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -83,17 +100,9 @@ export default function LoginPage() {
     <>
       <Script
         src="https://accounts.google.com/gsi/client"
+        strategy="afterInteractive"
         onLoad={() => {
-          if (window.google && googleClientId) {
-            window.google.accounts.id.initialize({
-              client_id: googleClientId,
-              callback: handleGoogleResponse,
-            });
-            window.google.accounts.id.renderButton(
-              document.getElementById("google-signin-btn"),
-              { theme: "outline", size: "large", width: "100%" }
-            );
-          }
+          setScriptLoaded(true);
         }}
       />
       <div className="min-h-screen flex items-center justify-center bg-gray-50 py-12 px-4 sm:px-6 lg:px-8">
@@ -116,13 +125,18 @@ export default function LoginPage() {
             {/* Google Sign-In Button */}
             {googleClientId && (
               <>
-                <div id="google-signin-btn" className="w-full mb-4"></div>
+                <div
+                  ref={googleButtonRef}
+                  className="w-full mb-4 flex justify-center"
+                ></div>
                 <div className="relative my-6">
                   <div className="absolute inset-0 flex items-center">
                     <div className="w-full border-t border-gray-300"></div>
                   </div>
                   <div className="relative flex justify-center text-sm">
-                    <span className="px-2 bg-white text-gray-500">Or continue with email</span>
+                    <span className="px-2 bg-white text-gray-500">
+                      Or continue with email
+                    </span>
                   </div>
                 </div>
               </>
