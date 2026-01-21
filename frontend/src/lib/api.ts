@@ -160,7 +160,10 @@ export const analysisApi = {
   },
 
   triggerAnalysis: async (brandId: string, platforms?: string[]) => {
-    const params = platforms ? `?platforms=${platforms.join(",")}` : "";
+    // FastAPI expects multiple 'platforms' params, not comma-separated
+    const params = platforms
+      ? `?${platforms.map((p) => `platforms=${p}`).join("&")}`
+      : "";
     const response = await api.post(
       `/api/analysis/brand/${brandId}/run${params}`
     );
