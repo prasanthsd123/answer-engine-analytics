@@ -198,15 +198,26 @@ class BrandResearcher:
             if existing_info and existing_info.get("competitors"):
                 known_competitors.extend(existing_info["competitors"])
 
-            # Conduct Perplexity research
+            # Conduct Perplexity research with ALL scraped website data
             market_research = await perplexity.research_market(
                 brand_name=research.brand_name,
                 industry=industry,
                 domain=research.domain,
                 website_data={
+                    # Core product info from website scraping
                     "products": research.products,
                     "features": research.features,
                     "use_cases": research.use_cases,
+                    # Customer info
+                    "testimonials": research.testimonials,
+                    "industries": research.customer_industries,
+                    "personas": research.customer_personas,
+                    # Additional context
+                    "tagline": research.tagline,
+                    "description": research.description,
+                    "value_proposition": research.value_proposition,
+                    "pricing_model": research.pricing_model,
+                    "integrations": research.integrations,
                 },
                 known_competitors=known_competitors
             )

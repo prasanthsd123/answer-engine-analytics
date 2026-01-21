@@ -111,7 +111,10 @@ class PerplexityResearcher:
         # Execute each research query
         for query_type in self.RESEARCH_QUERIES:
             try:
-                query = self._build_query(query_type, brand_name, industry, domain, known_competitors)
+                query = self._build_query(
+                    query_type, brand_name, industry, domain,
+                    known_competitors, website_data  # Pass scraped website data!
+                )
                 logger.info(f"Executing Perplexity query: {query_type}")
 
                 response = await self.adapter.execute_query(query)
@@ -146,26 +149,96 @@ class PerplexityResearcher:
         brand_name: str,
         industry: str,
         domain: Optional[str],
-        known_competitors: Optional[List[str]]
+        known_competitors: Optional[List[str]],
+        website_data: Optional[Dict[str, Any]] = None
     ) -> str:
-        """Build a specific research query."""
+        """Build a specific research query with website context."""
 
         competitors_str = ", ".join(known_competitors[:3]) if known_competitors else ""
+
+        # Build website context from scraped data
+        website_context = ""
+        if website_data:
+            context_parts = []
+
+            # Basic info
+            if website_data.get("tagline"):
+                context_parts.append(f"Tagline: {website_data['tagline']}")
+            if website_data.get("description"):
+                context_parts.append(f"Description: {website_data['description'][:300]}")
+            if website_data.get("value_proposition"):
+                context_parts.append(f"Value Proposition: {website_data['value_proposition'][:200]}")
+
+            # Products
+            if website_data.get("products"):
+                products = website_data["products"][:5]
+                if products:
+                    if isinstance(products[0], dict):
+                        product_names = [p.get("name", str(p)) for p in products]
+                    else:
+                        product_names = [str(p) for p in products]
+                    context_parts.append(f"Products/Services: {', '.join(product_names)}")
+
+            # Features
+            if website_data.get("features"):
+                features = website_data["features"][:10]
+                context_parts.append(f"Key Features: {', '.join(features)}")
+
+            # Use cases
+            if website_data.get("use_cases"):
+                use_cases = website_data["use_cases"][:5]
+                context_parts.append(f"Use Cases: {', '.join(use_cases)}")
+
+            # Customer info
+            if website_data.get("industries"):
+                industries = website_data["industries"][:5]
+                context_parts.append(f"Customer Industries: {', '.join(industries)}")
+            if website_data.get("personas"):
+                personas = website_data["personas"][:5]
+                context_parts.append(f"Target Personas: {', '.join(personas)}")
+
+            # Testimonials summary
+            if website_data.get("testimonials"):
+                testimonials = website_data["testimonials"]
+                context_parts.append(f"Customer Testimonials: {len(testimonials)} found")
+                # Add a sample testimonial
+                if testimonials and hasattr(testimonials[0], 'quote'):
+                    sample = testimonials[0]
+                    quote_preview = sample.quote[:150] if len(sample.quote) > 150 else sample.quote
+                    context_parts.append(f'Sample Review: "{quote_preview}..."')
+
+            # Pricing
+            if website_data.get("pricing_model"):
+                context_parts.append(f"Pricing Model: {website_data['pricing_model']}")
+
+            # Integrations
+            if website_data.get("integrations"):
+                integrations = website_data["integrations"][:8]
+                context_parts.append(f"Integrations: {', '.join(integrations)}")
+
+            if context_parts:
+                website_context = "\n\n=== WEBSITE DATA (scraped from their site) ===\n" + "\n".join(context_parts)
 
         queries = {
             "market_position": f"""
 What is {brand_name}'s market position in the {industry} industry?
-Include:
+{f'Website: {domain}' if domain else ''}
+{website_context}
+
+Based on the above website data and your research, provide:
 - Their main value proposition
 - Who are their top 5 competitors
 - How they differentiate from competitors
 - Their approximate market share or position (leader, challenger, niche player)
-{f'Website: {domain}' if domain else ''}
+
 Provide specific competitor names and cite your sources.
 """,
 
             "customer_reviews": f"""
 What do customers say about {brand_name}?
+{f'Website: {domain}' if domain else ''}
+{website_context}
+
 Search for reviews on:
 - G2.com
 - Capterra
@@ -174,7 +247,7 @@ Search for reviews on:
 
 Summarize:
 - Overall customer sentiment (positive/mixed/negative)
-- Common praise points
+- Common praise points (especially about the features listed above)
 - Common complaints or issues
 - Average rating if available
 
@@ -183,39 +256,45 @@ Be specific and cite review sources.
 
             "competitive_analysis": f"""
 Compare {brand_name} with its main competitors in {industry}.
+{f'Website: {domain}' if domain else ''}
 {f'Known competitors: {competitors_str}' if competitors_str else ''}
+{website_context}
 
-Compare:
-- Key features and capabilities
+Based on the products and features above, compare:
+- Key features and capabilities vs competitors
 - Pricing (specific tiers if available)
 - Target customer segments
 - Unique differentiators
 
-Create a comparison of {brand_name} vs top 3 competitors.
+Create a detailed comparison of {brand_name} vs top 3 competitors.
 Include specific pricing and feature information where available.
 """,
 
             "pain_points": f"""
 What problems do {industry} customers commonly face that products like {brand_name} solve?
+{f'Website: {domain}' if domain else ''}
+{website_context}
 
-Research:
-- Common pain points in {industry}
-- How {brand_name} addresses these problems
+Based on the products, features, and use cases above, research:
+- Common pain points in {industry} that {brand_name} addresses
+- Specific problems each feature/product solves
 - Typical use cases and workflows
 - Customer success stories or case studies
 
-Be specific about real customer problems and solutions.
+Be specific about real customer problems and how {brand_name}'s features solve them.
 """,
 
             "industry_trends": f"""
 What are the latest trends and developments in {industry} that affect companies like {brand_name}?
+{f'Website: {domain}' if domain else ''}
+{website_context}
 
-Include:
-- Emerging technologies and features
+Based on the features and products above, include:
+- Emerging technologies and features in this space
 - Market growth trends
 - Changes in customer expectations
 - New competitors or market entrants
-- Regulatory or compliance changes
+- How {brand_name}'s features align with these trends
 
 Focus on 2024-2025 trends and cite industry reports.
 """
