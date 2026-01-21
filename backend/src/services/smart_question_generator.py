@@ -1,8 +1,14 @@
 """
-Smart Question Generator - Generates realistic user questions using AI.
+Smart Question Generator - Generates realistic user questions based on deep website research.
 
 This service creates questions that mimic how real users would search
 for products/services in AI search engines like ChatGPT, Perplexity, etc.
+
+Questions are generated based on actual website content:
+- Real products and features
+- Actual customer industries and personas
+- Specific use cases and problems solved
+- Customer testimonials and case studies
 """
 
 import logging
@@ -28,13 +34,14 @@ class GeneratedQuestion:
 
 class SmartQuestionGenerator:
     """
-    Generates realistic user questions based on brand research.
+    Generates realistic user questions based on deep brand research.
 
-    Instead of simple templates, this uses AI to generate questions
-    that real users would type when searching for solutions.
+    Instead of simple templates, this uses comprehensive website research
+    to generate questions that real users would actually type when
+    searching for solutions in their specific situation.
     """
 
-    # Question intent categories
+    # Question intent categories with descriptions
     INTENTS = {
         "discovery": "User discovering options in a category",
         "comparison": "User comparing specific products/brands",
@@ -42,7 +49,9 @@ class SmartQuestionGenerator:
         "feature": "User looking for specific capabilities",
         "problem_solving": "User trying to solve a specific problem",
         "review": "User looking for opinions and reviews",
-        "pricing": "User researching costs and value"
+        "pricing": "User researching costs and value",
+        "industry_specific": "User searching within their specific industry",
+        "persona_specific": "User searching based on their role/job"
     }
 
     def __init__(self):
@@ -59,10 +68,10 @@ class SmartQuestionGenerator:
         focus_intents: List[str] = None
     ) -> List[GeneratedQuestion]:
         """
-        Generate realistic user questions based on brand research.
+        Generate realistic user questions based on comprehensive brand research.
 
         Args:
-            brand_research: Research data about the brand
+            brand_research: Deep research data about the brand from website crawling
             competitors: List of competitor names
             num_questions: Target number of questions to generate
             focus_intents: Specific intents to focus on (optional)
@@ -93,55 +102,94 @@ class SmartQuestionGenerator:
         num_questions: int,
         focus_intents: List[str]
     ) -> List[GeneratedQuestion]:
-        """Generate questions using AI."""
+        """Generate questions using AI based on comprehensive research."""
 
-        # Build comprehensive context
-        context = self._build_context(research, competitors)
+        # Build detailed context from research
+        context = self._build_comprehensive_context(research, competitors)
 
-        prompt = f"""You are a search behavior expert. Generate {num_questions} realistic questions that users would type into AI assistants (ChatGPT, Perplexity, Claude) when researching products in this space.
+        prompt = f"""You are an expert at understanding how real users search for products and services using AI assistants like ChatGPT, Perplexity, and Claude.
 
-BRAND CONTEXT:
+Based on DEEP RESEARCH of this company's website, generate {num_questions} realistic search questions that potential customers would actually type.
+
+=== COMPANY RESEARCH DATA ===
 {context}
 
-COMPETITORS: {', '.join(competitors) if competitors else 'Unknown'}
+=== QUESTION GENERATION RULES ===
 
-IMPORTANT GUIDELINES:
-1. Questions should sound NATURAL - like real people searching
-2. Include typos or casual language occasionally (e.g., "whats the best..." not "What is the best...")
-3. Mix question types:
-   - Generic category questions (don't always mention the brand)
-   - Direct brand questions
-   - Comparison questions
-   - Problem-based questions ("how do I...", "best way to...")
-4. Vary question length - some short, some detailed
-5. Include questions a potential customer would ask BEFORE knowing about this brand
+1. **Use ACTUAL data from the research** - reference real:
+   - Product names found on the website
+   - Specific features mentioned
+   - Industries their customers are in
+   - Job roles/personas that use the product
+   - Use cases and problems they solve
+   - Pricing model information
 
-QUESTION CATEGORIES TO INCLUDE:
-- discovery: Finding options in the category (30%)
-- comparison: Comparing brands/products (20%)
-- evaluation: Deciding if something is right for them (15%)
-- feature: Looking for specific capabilities (15%)
-- problem_solving: Solving specific problems (10%)
-- review: Seeking opinions (5%)
-- pricing: Understanding costs (5%)
+2. **Question Types to Generate** (distribute across these):
 
-Return a JSON array with this structure:
+   DISCOVERY (25%) - Generic category searches BEFORE knowing the brand:
+   - "best [specific product category] for [specific industry found]"
+   - "top [category] tools for [persona/role found]"
+   - "[specific problem from use cases] solutions"
+
+   COMPARISON (20%) - Comparing this brand with competitors:
+   - "[brand] vs [competitor] for [specific use case]"
+   - "compare [brand] and [competitor] [specific feature]"
+   - "[competitor] alternative for [industry]"
+
+   EVALUATION (15%) - Deciding if this product is right for them:
+   - "is [brand] good for [specific industry found]"
+   - "[brand] for [company size found - startup/SMB/enterprise]"
+   - "should [persona] use [brand]"
+
+   FEATURE-SPECIFIC (15%) - Searching for specific capabilities:
+   - "does [brand] have [actual feature from website]"
+   - "[brand] [specific feature] capabilities"
+   - "best [feature] tool like [brand]"
+
+   PROBLEM-SOLVING (10%) - User has a specific problem:
+   - "how to [actual use case from website]"
+   - "best way to [problem they solve]"
+   - "[specific pain point] solution for [industry]"
+
+   INDUSTRY-SPECIFIC (10%) - Industry-focused searches:
+   - "[brand] for [specific industry from customer list]"
+   - "best [category] for [industry] companies"
+   - "[industry] [product category] recommendations"
+
+   PRICING/VALUE (5%) - Cost-related questions:
+   - "[brand] pricing for [company size]"
+   - "is [brand] worth it for [persona]"
+   - "[brand] [pricing tier] vs [tier] comparison"
+
+3. **Make questions REALISTIC**:
+   - Mix formal and casual language
+   - Some short (3-5 words), some longer (10+ words)
+   - Include occasional typos or informal phrasing
+   - Questions a real person would type, not perfect grammar
+
+4. **IMPORTANT - Be Specific**:
+   - DON'T use generic placeholders
+   - DO use actual product names, features, industries from the research
+   - Reference real customer types and use cases found
+
+=== OUTPUT FORMAT ===
+Return a JSON array:
 [
   {{
-    "text": "the question text exactly as a user would type it",
-    "category": "one of: discovery, comparison, evaluation, feature, problem_solving, review, pricing",
-    "intent": "brief description of what the user wants",
+    "text": "exact question as user would type it",
+    "category": "discovery|comparison|evaluation|feature|problem_solving|industry_specific|pricing",
+    "intent": "brief description of what they're looking for",
     "priority": 1-5 (5 = most important for brand visibility)
   }}
 ]
 
-Generate diverse, realistic questions. Return ONLY the JSON array."""
+Generate diverse, realistic questions using the ACTUAL research data provided. Return ONLY valid JSON."""
 
         response = await self.openai_client.chat.completions.create(
             model="gpt-4o",
             messages=[{"role": "user", "content": prompt}],
-            temperature=0.8,  # Higher temperature for diversity
-            max_tokens=3000
+            temperature=0.85,  # Higher for diversity
+            max_tokens=4000
         )
 
         result_text = response.choices[0].message.content.strip()
@@ -163,113 +211,192 @@ Generate diverse, realistic questions. Return ONLY the JSON array."""
             for q in questions_data
         ]
 
-    def _build_context(self, research: BrandResearch, competitors: List[str]) -> str:
-        """Build context string for AI prompt."""
+    def _build_comprehensive_context(self, research: BrandResearch, competitors: List[str]) -> str:
+        """Build detailed context from comprehensive brand research."""
         parts = []
 
-        parts.append(f"Brand: {research.brand_name}")
-
+        # Basic info
+        parts.append(f"BRAND NAME: {research.brand_name}")
         if research.domain:
-            parts.append(f"Website: {research.domain}")
-
+            parts.append(f"WEBSITE: {research.domain}")
         if research.industry:
-            parts.append(f"Industry: {research.industry}")
-
+            parts.append(f"INDUSTRY: {research.industry}")
+        if research.tagline:
+            parts.append(f"TAGLINE: {research.tagline}")
         if research.description:
-            parts.append(f"Description: {research.description}")
+            parts.append(f"DESCRIPTION: {research.description}")
+        if research.value_proposition:
+            parts.append(f"VALUE PROPOSITION: {research.value_proposition}")
 
+        # Products (with details)
         if research.products:
-            products_str = ", ".join(
-                p["name"] if isinstance(p, dict) else str(p)
-                for p in research.products[:5]
-            )
-            parts.append(f"Products/Services: {products_str}")
+            products_text = []
+            for p in research.products[:10]:
+                if isinstance(p, dict):
+                    name = p.get("name", "Unknown")
+                    desc = p.get("description", "")
+                    products_text.append(f"  - {name}: {desc}" if desc else f"  - {name}")
+                else:
+                    products_text.append(f"  - {p}")
+            parts.append(f"PRODUCTS/SERVICES:\n" + "\n".join(products_text))
 
+        # Features
         if research.features:
-            parts.append(f"Key Features: {', '.join(research.features[:10])}")
+            parts.append(f"KEY FEATURES: {', '.join(research.features[:15])}")
 
+        # Integrations
+        if research.integrations:
+            parts.append(f"INTEGRATIONS: {', '.join(research.integrations[:10])}")
+
+        # Customer information
         if research.target_audience:
-            parts.append(f"Target Audience: {research.target_audience}")
+            parts.append(f"TARGET AUDIENCE: {research.target_audience}")
 
+        if research.customer_industries:
+            parts.append(f"CUSTOMER INDUSTRIES: {', '.join(research.customer_industries[:10])}")
+
+        if research.customer_company_sizes:
+            parts.append(f"CUSTOMER COMPANY SIZES: {', '.join(research.customer_company_sizes)}")
+
+        if research.customer_personas:
+            parts.append(f"BUYER PERSONAS (Job Roles): {', '.join(research.customer_personas[:10])}")
+
+        # Testimonials (actual customer quotes)
+        if research.testimonials:
+            testimonial_text = []
+            for t in research.testimonials[:5]:
+                quote_preview = t.quote[:150] + "..." if len(t.quote) > 150 else t.quote
+                attribution = []
+                if t.company:
+                    attribution.append(t.company)
+                if t.role:
+                    attribution.append(t.role)
+                if t.industry:
+                    attribution.append(t.industry)
+                attr_str = f" ({', '.join(attribution)})" if attribution else ""
+                testimonial_text.append(f'  - "{quote_preview}"{attr_str}')
+            parts.append(f"CUSTOMER TESTIMONIALS:\n" + "\n".join(testimonial_text))
+
+        # Case studies
+        if research.case_study_summaries:
+            parts.append(f"CASE STUDIES:\n  - " + "\n  - ".join(research.case_study_summaries[:5]))
+
+        # Use cases
         if research.use_cases:
-            parts.append(f"Use Cases: {', '.join(research.use_cases[:5])}")
+            parts.append(f"USE CASES (Problems They Solve):\n  - " + "\n  - ".join(research.use_cases[:10]))
 
+        # Differentiators
         if research.differentiators:
-            parts.append(f"Differentiators: {', '.join(research.differentiators[:5])}")
+            parts.append(f"DIFFERENTIATORS:\n  - " + "\n  - ".join(research.differentiators[:5]))
 
+        # Pricing
         if research.pricing_model:
-            parts.append(f"Pricing Model: {research.pricing_model}")
+            parts.append(f"PRICING MODEL: {research.pricing_model}")
+        if research.pricing_tiers:
+            parts.append(f"PRICING TIERS: {', '.join(research.pricing_tiers)}")
 
-        return "\n".join(parts)
+        # Competitors
+        all_competitors = list(set(competitors + research.competitors_mentioned))
+        if all_competitors:
+            parts.append(f"COMPETITORS: {', '.join(all_competitors[:8])}")
+
+        # Pages crawled (for context)
+        if research.pages_crawled:
+            parts.append(f"WEBSITE PAGES ANALYZED: {len(research.pages_crawled)}")
+
+        return "\n\n".join(parts)
 
     def _generate_template_questions(
         self,
         research: BrandResearch,
         competitors: List[str]
     ) -> List[GeneratedQuestion]:
-        """Fallback template-based generation."""
+        """Fallback template-based generation using research data."""
         questions = []
         brand = research.brand_name
         industry = research.industry or "software"
 
-        # Discovery questions
-        discovery_templates = [
-            f"what is the best {industry} tool",
-            f"top {industry} solutions 2025",
-            f"best {industry} for small business",
-            f"recommended {industry} platforms",
-        ]
+        # Use actual data from research where available
+        customer_industries = research.customer_industries or [industry]
+        personas = research.customer_personas or ["teams", "businesses"]
+        features = research.features or []
+        use_cases = research.use_cases or []
+        products = research.products or []
 
-        # Comparison questions
-        comparison_templates = [
-            f"{brand} vs competitors",
-            f"is {brand} better than alternatives",
-            f"{brand} compared to other options",
-        ]
-        if competitors:
-            for comp in competitors[:3]:
-                comparison_templates.append(f"{brand} vs {comp}")
-                comparison_templates.append(f"{comp} or {brand} which is better")
+        # Discovery questions using actual industries
+        for ind in customer_industries[:3]:
+            questions.append(GeneratedQuestion(
+                f"best {industry} for {ind}",
+                "discovery", "finding category options", 4
+            ))
+
+        for persona in personas[:2]:
+            questions.append(GeneratedQuestion(
+                f"top {industry} tools for {persona}",
+                "discovery", "persona-based search", 4
+            ))
+
+        # Use case based questions
+        for use_case in use_cases[:4]:
+            questions.append(GeneratedQuestion(
+                f"how to {use_case}",
+                "problem_solving", "solving specific problem", 4
+            ))
+            questions.append(GeneratedQuestion(
+                f"best tool for {use_case}",
+                "discovery", "solution search", 4
+            ))
+
+        # Feature questions using actual features
+        for feature in features[:3]:
+            questions.append(GeneratedQuestion(
+                f"does {brand} have {feature}",
+                "feature", "capability check", 3
+            ))
+            questions.append(GeneratedQuestion(
+                f"best {feature} software",
+                "discovery", "feature-focused search", 3
+            ))
+
+        # Comparison questions with competitors
+        for comp in competitors[:3]:
+            questions.append(GeneratedQuestion(
+                f"{brand} vs {comp}",
+                "comparison", "direct comparison", 5
+            ))
+            if customer_industries:
+                questions.append(GeneratedQuestion(
+                    f"{brand} vs {comp} for {customer_industries[0]}",
+                    "comparison", "industry-specific comparison", 5
+                ))
 
         # Evaluation questions
-        evaluation_templates = [
-            f"is {brand} worth it",
-            f"should I use {brand}",
-            f"{brand} pros and cons",
-            f"is {brand} good for beginners",
-            f"{brand} honest review",
-        ]
+        questions.extend([
+            GeneratedQuestion(f"is {brand} worth it", "evaluation", "value assessment", 4),
+            GeneratedQuestion(f"{brand} reviews", "review", "seeking opinions", 4),
+            GeneratedQuestion(f"should I use {brand}", "evaluation", "decision making", 4),
+        ])
 
-        # Feature questions
-        feature_templates = [
-            f"what does {brand} do",
-            f"{brand} features",
-            f"can {brand} do automation",
-        ]
-        if research.features:
-            for feature in research.features[:3]:
-                feature_templates.append(f"does {brand} have {feature}")
+        # Industry-specific questions
+        for ind in customer_industries[:2]:
+            questions.append(GeneratedQuestion(
+                f"{brand} for {ind}",
+                "industry_specific", "industry fit", 4
+            ))
 
-        # Problem-solving questions
-        problem_templates = []
-        if research.use_cases:
-            for use_case in research.use_cases[:3]:
-                problem_templates.append(f"best tool for {use_case}")
-                problem_templates.append(f"how to {use_case}")
+        # Pricing questions
+        if research.pricing_model:
+            questions.append(GeneratedQuestion(
+                f"{brand} pricing",
+                "pricing", "cost research", 3
+            ))
+        if research.pricing_tiers:
+            questions.append(GeneratedQuestion(
+                f"{brand} {research.pricing_tiers[0]} vs {research.pricing_tiers[-1] if len(research.pricing_tiers) > 1 else 'free'}",
+                "pricing", "tier comparison", 3
+            ))
 
-        # Add all questions
-        for q in discovery_templates:
-            questions.append(GeneratedQuestion(q, "discovery", "finding options", 4))
-        for q in comparison_templates:
-            questions.append(GeneratedQuestion(q, "comparison", "comparing options", 5))
-        for q in evaluation_templates:
-            questions.append(GeneratedQuestion(q, "evaluation", "deciding", 4))
-        for q in feature_templates:
-            questions.append(GeneratedQuestion(q, "feature", "capability check", 3))
-        for q in problem_templates:
-            questions.append(GeneratedQuestion(q, "problem_solving", "solving problem", 4))
-
-        return questions[:20]  # Limit to 20
+        return questions[:20]
 
 
 async def generate_smart_questions(
@@ -282,13 +409,16 @@ async def generate_smart_questions(
     num_questions: int = 20
 ) -> List[GeneratedQuestion]:
     """
-    Convenience function to research a brand and generate questions.
+    Convenience function to research a brand deeply and generate questions.
 
     This is the main entry point for smart question generation.
+    It performs comprehensive website research before generating questions.
     """
     from .brand_researcher import BrandResearcher
 
-    # Research the brand
+    logger.info(f"Starting smart question generation for {brand_name}")
+
+    # Deep research of the brand
     researcher = BrandResearcher()
     try:
         existing_info = {
@@ -297,11 +427,16 @@ async def generate_smart_questions(
             "products": products or []
         }
 
+        logger.info(f"Researching brand website: {domain}")
         research = await researcher.research_brand(
             brand_name=brand_name,
             domain=domain,
             existing_info=existing_info
         )
+
+        logger.info(f"Research complete: {len(research.pages_crawled)} pages crawled")
+        logger.info(f"Found: {len(research.products)} products, {len(research.features)} features, "
+                   f"{len(research.customer_industries)} industries, {len(research.testimonials)} testimonials")
 
         # Override with provided industry if research didn't find one
         if industry and not research.industry:
@@ -310,7 +445,7 @@ async def generate_smart_questions(
     finally:
         await researcher.close()
 
-    # Generate questions
+    # Generate questions based on comprehensive research
     generator = SmartQuestionGenerator()
     questions = await generator.generate_questions(
         brand_research=research,
@@ -318,4 +453,5 @@ async def generate_smart_questions(
         num_questions=num_questions
     )
 
+    logger.info(f"Generated {len(questions)} questions")
     return questions

@@ -1,12 +1,21 @@
 """
-Brand Research Service - Analyzes brand websites and extracts key information.
+Brand Research Service - Deep website analysis to extract comprehensive brand information.
+
+This service crawls brand websites thoroughly to understand:
+- What products/services they offer
+- Who their customers are (industries, company sizes, personas)
+- Real customer testimonials and use cases
+- Pricing models and value propositions
+- Key differentiators and features
 """
 
 import asyncio
 import logging
 import re
-from typing import Dict, Any, Optional, List
-from dataclasses import dataclass
+import json
+from typing import Dict, Any, Optional, List, Set
+from dataclasses import dataclass, field
+from urllib.parse import urljoin, urlparse
 import httpx
 from bs4 import BeautifulSoup
 
@@ -16,41 +25,88 @@ logger = logging.getLogger(__name__)
 
 
 @dataclass
+class CustomerTestimonial:
+    """A customer testimonial from the website."""
+    quote: str
+    customer_name: Optional[str] = None
+    company: Optional[str] = None
+    role: Optional[str] = None
+    industry: Optional[str] = None
+
+
+@dataclass
 class BrandResearch:
-    """Research results for a brand."""
+    """Comprehensive research results for a brand."""
     brand_name: str
     domain: str
+
+    # Basic info
     tagline: Optional[str] = None
     description: Optional[str] = None
-    products: List[Dict[str, str]] = None
-    features: List[str] = None
-    target_audience: Optional[str] = None
-    pricing_model: Optional[str] = None
-    use_cases: List[str] = None
-    differentiators: List[str] = None
-    industry: Optional[str] = None
-    competitors_mentioned: List[str] = None
-    raw_content: Optional[str] = None
+    value_proposition: Optional[str] = None
 
-    def __post_init__(self):
-        self.products = self.products or []
-        self.features = self.features or []
-        self.use_cases = self.use_cases or []
-        self.differentiators = self.differentiators or []
-        self.competitors_mentioned = self.competitors_mentioned or []
+    # Products & Services
+    products: List[Dict[str, str]] = field(default_factory=list)
+    features: List[str] = field(default_factory=list)
+    integrations: List[str] = field(default_factory=list)
+
+    # Customer information
+    target_audience: Optional[str] = None
+    customer_industries: List[str] = field(default_factory=list)
+    customer_company_sizes: List[str] = field(default_factory=list)
+    customer_personas: List[str] = field(default_factory=list)
+    testimonials: List[CustomerTestimonial] = field(default_factory=list)
+    case_study_summaries: List[str] = field(default_factory=list)
+
+    # Business model
+    pricing_model: Optional[str] = None
+    pricing_tiers: List[str] = field(default_factory=list)
+
+    # Competitive landscape
+    use_cases: List[str] = field(default_factory=list)
+    differentiators: List[str] = field(default_factory=list)
+    industry: Optional[str] = None
+    competitors_mentioned: List[str] = field(default_factory=list)
+
+    # Raw data for AI analysis
+    raw_content: Dict[str, str] = field(default_factory=dict)
+    pages_crawled: List[str] = field(default_factory=list)
 
 
 class BrandResearcher:
-    """Researches brands by analyzing their websites and using AI."""
+    """
+    Deep website researcher that extracts comprehensive brand information.
+
+    Crawls multiple pages including:
+    - Homepage
+    - About/Company pages
+    - Products/Features/Solutions pages
+    - Pricing page
+    - Customers/Case Studies pages
+    - Use Cases pages
+    """
+
+    # Pages to crawl for comprehensive research
+    PAGES_TO_CRAWL = [
+        "",  # Homepage
+        "about", "about-us", "company",
+        "products", "product", "features", "solutions", "platform",
+        "pricing", "plans",
+        "customers", "case-studies", "case-study", "success-stories", "testimonials",
+        "use-cases", "usecases", "industries", "who-we-serve",
+        "why-us", "why", "compare", "vs",
+        "integrations", "apps", "marketplace",
+    ]
 
     def __init__(self):
         self.http_client = httpx.AsyncClient(
             timeout=30.0,
             follow_redirects=True,
             headers={
-                "User-Agent": "Mozilla/5.0 (compatible; AnswerEngineBot/1.0)"
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
             }
         )
+        self.visited_urls: Set[str] = set()
 
     async def research_brand(
         self,
@@ -59,7 +115,7 @@ class BrandResearcher:
         existing_info: Optional[Dict[str, Any]] = None
     ) -> BrandResearch:
         """
-        Research a brand by crawling their website and analyzing with AI.
+        Perform deep research on a brand by crawling their website.
 
         Args:
             brand_name: Name of the brand
@@ -67,153 +123,350 @@ class BrandResearcher:
             existing_info: Any existing brand information
 
         Returns:
-            BrandResearch object with extracted information
+            BrandResearch object with comprehensive extracted information
         """
         research = BrandResearch(brand_name=brand_name, domain=domain or "")
+        self.visited_urls.clear()
 
-        # Step 1: Crawl website if domain provided
+        # Step 1: Deep crawl website if domain provided
         if domain:
-            website_content = await self._crawl_website(domain)
-            if website_content:
-                research.raw_content = website_content
-                # Extract basic info from HTML
-                basic_info = self._extract_basic_info(website_content)
-                research.tagline = basic_info.get("tagline")
-                research.description = basic_info.get("description")
+            logger.info(f"Starting deep crawl of {domain}")
+            await self._deep_crawl_website(domain, research)
+            logger.info(f"Crawled {len(research.pages_crawled)} pages from {domain}")
 
-        # Step 2: Use AI to analyze and extract detailed information
-        if settings.OPENAI_API_KEY:
+        # Step 2: Extract testimonials from raw content
+        self._extract_testimonials(research)
+
+        # Step 3: Use AI to analyze all collected content
+        if settings.OPENAI_API_KEY and research.raw_content:
+            logger.info("Analyzing content with AI...")
             ai_analysis = await self._analyze_with_ai(research, existing_info)
             if ai_analysis:
-                research.products = ai_analysis.get("products", [])
-                research.features = ai_analysis.get("features", [])
-                research.target_audience = ai_analysis.get("target_audience")
-                research.pricing_model = ai_analysis.get("pricing_model")
-                research.use_cases = ai_analysis.get("use_cases", [])
-                research.differentiators = ai_analysis.get("differentiators", [])
-                research.industry = ai_analysis.get("industry")
-                research.competitors_mentioned = ai_analysis.get("competitors", [])
+                self._apply_ai_analysis(research, ai_analysis)
 
         return research
 
-    async def _crawl_website(self, domain: str) -> Optional[str]:
-        """Crawl the main pages of a website."""
-        urls_to_try = [
-            f"https://{domain}",
-            f"https://www.{domain}",
-            f"https://{domain}/about",
-            f"https://{domain}/features",
-            f"https://{domain}/pricing",
-        ]
+    async def _deep_crawl_website(self, domain: str, research: BrandResearch) -> None:
+        """Crawl multiple pages of the website for comprehensive data."""
+        base_urls = [f"https://{domain}", f"https://www.{domain}"]
 
-        combined_content = []
-
-        for url in urls_to_try[:3]:  # Limit to first 3 URLs
+        # Find working base URL
+        base_url = None
+        for url in base_urls:
             try:
                 response = await self.http_client.get(url)
                 if response.status_code == 200:
-                    soup = BeautifulSoup(response.text, 'html.parser')
-
-                    # Remove script and style elements
-                    for script in soup(["script", "style", "nav", "footer", "header"]):
-                        script.decompose()
-
-                    # Get text content
-                    text = soup.get_text(separator=' ', strip=True)
-                    # Clean up whitespace
-                    text = re.sub(r'\s+', ' ', text)
-                    combined_content.append(text[:5000])  # Limit per page
-
-            except Exception as e:
-                logger.debug(f"Failed to crawl {url}: {e}")
+                    base_url = str(response.url).rstrip('/')
+                    break
+            except Exception:
                 continue
 
-        return "\n\n".join(combined_content) if combined_content else None
+        if not base_url:
+            logger.warning(f"Could not connect to {domain}")
+            return
 
-    def _extract_basic_info(self, html_content: str) -> Dict[str, str]:
-        """Extract basic info from HTML content."""
-        soup = BeautifulSoup(html_content, 'html.parser') if '<' in html_content else None
-        info = {}
+        # Crawl all target pages concurrently
+        tasks = []
+        for page_path in self.PAGES_TO_CRAWL:
+            url = f"{base_url}/{page_path}" if page_path else base_url
+            tasks.append(self._crawl_page(url, research))
 
-        if soup:
-            # Try to find meta description
-            meta_desc = soup.find("meta", attrs={"name": "description"})
-            if meta_desc and meta_desc.get("content"):
-                info["description"] = meta_desc["content"]
+        await asyncio.gather(*tasks, return_exceptions=True)
 
-            # Try to find tagline (often in h1 or hero section)
-            h1 = soup.find("h1")
-            if h1:
-                info["tagline"] = h1.get_text(strip=True)
+    async def _crawl_page(self, url: str, research: BrandResearch) -> None:
+        """Crawl a single page and extract content."""
+        # Normalize URL
+        normalized_url = url.rstrip('/')
+        if normalized_url in self.visited_urls:
+            return
+        self.visited_urls.add(normalized_url)
 
-        return info
+        try:
+            response = await self.http_client.get(url)
+            if response.status_code != 200:
+                return
+
+            soup = BeautifulSoup(response.text, 'html.parser')
+
+            # Get page type from URL
+            path = urlparse(str(response.url)).path.strip('/')
+            page_type = path.split('/')[0] if path else 'homepage'
+
+            # Extract different content based on page type
+            content = self._extract_page_content(soup, page_type)
+
+            if content and len(content) > 100:  # Only save meaningful content
+                research.raw_content[page_type] = content
+                research.pages_crawled.append(str(response.url))
+
+            # Extract meta information from homepage
+            if page_type == 'homepage':
+                self._extract_meta_info(soup, research)
+
+            # Look for additional relevant links to crawl
+            await self._find_and_crawl_links(soup, str(response.url), research)
+
+        except Exception as e:
+            logger.debug(f"Failed to crawl {url}: {e}")
+
+    def _extract_page_content(self, soup: BeautifulSoup, page_type: str) -> str:
+        """Extract relevant content from a page based on its type."""
+        # Remove non-content elements
+        for element in soup(["script", "style", "nav", "footer", "noscript", "iframe"]):
+            element.decompose()
+
+        content_parts = []
+
+        # Extract headings - they often contain key information
+        for heading in soup.find_all(['h1', 'h2', 'h3']):
+            text = heading.get_text(strip=True)
+            if text and len(text) > 3:
+                content_parts.append(f"[HEADING] {text}")
+
+        # For customer/testimonial pages, focus on quotes and testimonials
+        if page_type in ['customers', 'testimonials', 'case-studies', 'success-stories']:
+            # Look for blockquotes
+            for quote in soup.find_all('blockquote'):
+                text = quote.get_text(strip=True)
+                if text:
+                    content_parts.append(f"[TESTIMONIAL] {text}")
+
+            # Look for elements that might contain testimonials
+            for elem in soup.find_all(class_=re.compile(r'testimonial|quote|review|customer-story', re.I)):
+                text = elem.get_text(separator=' ', strip=True)
+                if text and len(text) > 50:
+                    content_parts.append(f"[CUSTOMER_QUOTE] {text[:1000]}")
+
+        # For pricing pages, extract pricing information
+        if page_type in ['pricing', 'plans']:
+            for elem in soup.find_all(class_=re.compile(r'price|plan|tier|package', re.I)):
+                text = elem.get_text(separator=' ', strip=True)
+                if text:
+                    content_parts.append(f"[PRICING] {text[:500]}")
+
+        # For features/products pages, extract feature lists
+        if page_type in ['features', 'products', 'solutions', 'platform']:
+            for elem in soup.find_all(['ul', 'ol']):
+                items = [li.get_text(strip=True) for li in elem.find_all('li')]
+                if items and len(items) >= 3:
+                    content_parts.append(f"[FEATURES] " + " | ".join(items[:15]))
+
+        # Extract main content areas
+        main_content = soup.find('main') or soup.find('article') or soup.find(role='main')
+        if main_content:
+            text = main_content.get_text(separator=' ', strip=True)
+            text = re.sub(r'\s+', ' ', text)
+            content_parts.append(f"[MAIN_CONTENT] {text[:8000]}")
+        else:
+            # Fall back to body content
+            body = soup.find('body')
+            if body:
+                text = body.get_text(separator=' ', strip=True)
+                text = re.sub(r'\s+', ' ', text)
+                content_parts.append(f"[BODY_CONTENT] {text[:6000]}")
+
+        return "\n".join(content_parts)
+
+    def _extract_meta_info(self, soup: BeautifulSoup, research: BrandResearch) -> None:
+        """Extract meta information from the page."""
+        # Meta description
+        meta_desc = soup.find("meta", attrs={"name": "description"})
+        if meta_desc and meta_desc.get("content"):
+            research.description = meta_desc["content"]
+
+        # OG description
+        og_desc = soup.find("meta", attrs={"property": "og:description"})
+        if og_desc and og_desc.get("content") and not research.description:
+            research.description = og_desc["content"]
+
+        # Tagline from H1
+        h1 = soup.find("h1")
+        if h1:
+            research.tagline = h1.get_text(strip=True)
+
+        # Look for value proposition
+        for elem in soup.find_all(class_=re.compile(r'hero|headline|tagline|value-prop', re.I)):
+            text = elem.get_text(strip=True)
+            if text and 10 < len(text) < 200:
+                research.value_proposition = text
+                break
+
+    async def _find_and_crawl_links(self, soup: BeautifulSoup, current_url: str, research: BrandResearch) -> None:
+        """Find and crawl additional relevant links on the page."""
+        relevant_patterns = [
+            r'/customers?/', r'/case-stud', r'/testimonial', r'/success',
+            r'/use-case', r'/industr', r'/solution', r'/who-we-serve'
+        ]
+
+        base_domain = urlparse(current_url).netloc
+
+        for link in soup.find_all('a', href=True):
+            href = link['href']
+            full_url = urljoin(current_url, href)
+
+            # Only follow links on same domain
+            if urlparse(full_url).netloc != base_domain:
+                continue
+
+            # Check if link matches relevant patterns
+            if any(re.search(pattern, full_url, re.I) for pattern in relevant_patterns):
+                if full_url not in self.visited_urls and len(self.visited_urls) < 20:
+                    await self._crawl_page(full_url, research)
+
+    def _extract_testimonials(self, research: BrandResearch) -> None:
+        """Extract customer testimonials from raw content."""
+        testimonial_pattern = re.compile(
+            r'\[(?:TESTIMONIAL|CUSTOMER_QUOTE)\]\s*(.+?)(?=\[|$)',
+            re.DOTALL
+        )
+
+        for page_type, content in research.raw_content.items():
+            for match in testimonial_pattern.finditer(content):
+                quote_text = match.group(1).strip()
+                if quote_text and len(quote_text) > 30:
+                    testimonial = CustomerTestimonial(quote=quote_text[:500])
+                    research.testimonials.append(testimonial)
 
     async def _analyze_with_ai(
         self,
         research: BrandResearch,
         existing_info: Optional[Dict[str, Any]]
     ) -> Optional[Dict[str, Any]]:
-        """Use AI to analyze brand information."""
+        """Use AI to analyze all collected website content."""
         try:
             import openai
             client = openai.AsyncOpenAI(api_key=settings.OPENAI_API_KEY)
 
-            # Build context from available info
-            context_parts = [f"Brand Name: {research.brand_name}"]
-            if research.domain:
-                context_parts.append(f"Website: {research.domain}")
+            # Build comprehensive context from all crawled pages
+            context_parts = [
+                f"Brand Name: {research.brand_name}",
+                f"Website: {research.domain}",
+                f"Pages Crawled: {len(research.pages_crawled)}",
+            ]
+
             if research.description:
-                context_parts.append(f"Description: {research.description}")
-            if research.raw_content:
-                context_parts.append(f"Website Content (excerpt): {research.raw_content[:3000]}")
+                context_parts.append(f"Meta Description: {research.description}")
+            if research.tagline:
+                context_parts.append(f"Tagline: {research.tagline}")
+
+            # Add existing info
             if existing_info:
                 if existing_info.get("industry"):
-                    context_parts.append(f"Industry: {existing_info['industry']}")
+                    context_parts.append(f"Known Industry: {existing_info['industry']}")
                 if existing_info.get("keywords"):
                     context_parts.append(f"Keywords: {', '.join(existing_info['keywords'])}")
-                if existing_info.get("products"):
-                    context_parts.append(f"Products: {existing_info['products']}")
+
+            # Add raw content from each page (prioritize customer-focused pages)
+            priority_pages = ['customers', 'case-studies', 'testimonials', 'success-stories',
+                           'use-cases', 'pricing', 'features', 'solutions', 'homepage']
+
+            content_budget = 12000  # tokens budget for content
+            current_length = 0
+
+            for page_type in priority_pages:
+                if page_type in research.raw_content and current_length < content_budget:
+                    content = research.raw_content[page_type]
+                    allowed_length = min(len(content), content_budget - current_length, 4000)
+                    context_parts.append(f"\n--- {page_type.upper()} PAGE ---\n{content[:allowed_length]}")
+                    current_length += allowed_length
+
+            # Add any remaining pages
+            for page_type, content in research.raw_content.items():
+                if page_type not in priority_pages and current_length < content_budget:
+                    allowed_length = min(len(content), content_budget - current_length, 2000)
+                    context_parts.append(f"\n--- {page_type.upper()} PAGE ---\n{content[:allowed_length]}")
+                    current_length += allowed_length
 
             context = "\n".join(context_parts)
 
-            prompt = f"""Analyze this brand and extract key information. Return a JSON object.
+            prompt = f"""You are a business analyst. Analyze this company's website content in detail and extract comprehensive information.
 
 {context}
 
-Extract and return this JSON structure:
+Based on the website content, extract the following. Be SPECIFIC and use actual information from the content, not generic descriptions:
+
 {{
-    "products": ["list of main products/services offered"],
-    "features": ["key features or capabilities"],
-    "target_audience": "who is the ideal customer (e.g., 'Small businesses', 'Enterprise', 'Developers')",
-    "pricing_model": "how they charge (e.g., 'Freemium', 'Subscription', 'Usage-based')",
-    "use_cases": ["main problems they solve or use cases"],
-    "differentiators": ["what makes them unique vs competitors"],
+    "products": [
+        {{"name": "actual product name", "description": "what it does", "category": "category"}}
+    ],
+    "features": ["list of specific features mentioned on the website"],
+    "integrations": ["specific tools/platforms they integrate with"],
+
+    "target_audience": "who is the primary customer (be specific based on website content)",
+    "customer_industries": ["specific industries their customers are in, from case studies/testimonials"],
+    "customer_company_sizes": ["startup", "SMB", "mid-market", "enterprise" - based on actual customers],
+    "customer_personas": ["specific job titles/roles that would use this product"],
+
+    "testimonials": [
+        {{"quote": "actual quote if found", "company": "company name", "role": "person's role", "industry": "their industry"}}
+    ],
+    "case_study_summaries": ["brief summary of each case study found"],
+
+    "pricing_model": "how they charge (freemium, subscription, usage-based, etc.)",
+    "pricing_tiers": ["names of pricing tiers if found"],
+
+    "use_cases": ["specific problems they solve or use cases from the website"],
+    "differentiators": ["what makes them unique - from their own messaging"],
     "industry": "primary industry/category",
-    "competitors": ["likely competitors in this space"]
+    "competitors": ["competitors mentioned or implied from comparison pages"]
 }}
 
-Be concise. If information is not available, use empty lists or null.
-Return ONLY valid JSON, no markdown or explanation."""
+IMPORTANT:
+- Only include information you can actually find in the content
+- Be specific - use actual product names, customer names, and quotes
+- For testimonials, include the actual quote text if available
+- Empty arrays [] are fine if information isn't available
+- Return ONLY valid JSON, no markdown formatting"""
 
             response = await client.chat.completions.create(
-                model="gpt-4o-mini",
+                model="gpt-4o",
                 messages=[{"role": "user", "content": prompt}],
-                temperature=0.3,
-                max_tokens=1000
+                temperature=0.2,
+                max_tokens=3000
             )
 
             result_text = response.choices[0].message.content.strip()
-            # Clean up potential markdown formatting
+
+            # Clean up markdown formatting
             if result_text.startswith("```"):
                 result_text = re.sub(r'^```json?\n?', '', result_text)
                 result_text = re.sub(r'\n?```$', '', result_text)
 
-            import json
             return json.loads(result_text)
 
         except Exception as e:
             logger.error(f"AI analysis failed: {e}")
             return None
+
+    def _apply_ai_analysis(self, research: BrandResearch, analysis: Dict[str, Any]) -> None:
+        """Apply AI analysis results to the research object."""
+        research.products = analysis.get("products", [])
+        research.features = analysis.get("features", [])
+        research.integrations = analysis.get("integrations", [])
+
+        research.target_audience = analysis.get("target_audience")
+        research.customer_industries = analysis.get("customer_industries", [])
+        research.customer_company_sizes = analysis.get("customer_company_sizes", [])
+        research.customer_personas = analysis.get("customer_personas", [])
+
+        # Add AI-extracted testimonials
+        for t in analysis.get("testimonials", []):
+            if t.get("quote"):
+                testimonial = CustomerTestimonial(
+                    quote=t["quote"],
+                    company=t.get("company"),
+                    role=t.get("role"),
+                    industry=t.get("industry")
+                )
+                research.testimonials.append(testimonial)
+
+        research.case_study_summaries = analysis.get("case_study_summaries", [])
+        research.pricing_model = analysis.get("pricing_model")
+        research.pricing_tiers = analysis.get("pricing_tiers", [])
+        research.use_cases = analysis.get("use_cases", [])
+        research.differentiators = analysis.get("differentiators", [])
+        research.industry = analysis.get("industry")
+        research.competitors_mentioned = analysis.get("competitors", [])
 
     async def close(self):
         """Close the HTTP client."""
