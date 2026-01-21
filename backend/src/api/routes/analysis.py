@@ -328,14 +328,25 @@ async def trigger_analysis(
     if not result.scalar_one_or_none():
         raise HTTPException(status_code=404, detail="Brand not found")
 
+    # Handle comma-separated platforms (in case frontend sends "chatgpt,perplexity" as single string)
+    parsed_platforms = None
+    if platforms:
+        parsed_platforms = []
+        for p in platforms:
+            if ',' in p:
+                parsed_platforms.extend([x.strip() for x in p.split(',')])
+            else:
+                parsed_platforms.append(p)
+        logger.info(f"Parsed platforms: {parsed_platforms}")
+
     from ...services.analysis_runner import AnalysisRunner
 
     # Run analysis in background using asyncio.create_task
     async def run_analysis_task():
         try:
-            logger.info(f"Starting analysis for brand {brand_id} on platforms {platforms}")
+            logger.info(f"Starting analysis for brand {brand_id} on platforms {parsed_platforms}")
             runner = AnalysisRunner()
-            results = await runner.run_analysis(brand_id, platforms)
+            results = await runner.run_analysis(brand_id, parsed_platforms)
             logger.info(f"Analysis completed for brand {brand_id}: {results}")
         except Exception as e:
             logger.error(f"Analysis failed for brand {brand_id}: {str(e)}", exc_info=True)
