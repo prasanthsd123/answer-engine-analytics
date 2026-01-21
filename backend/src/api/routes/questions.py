@@ -272,14 +272,16 @@ async def generate_smart_questions(
     current_user: User = Depends(get_current_user)
 ):
     """
-    Generate smart questions using AI based on brand research.
+    Generate smart questions using AI based on comprehensive brand research.
 
-    This endpoint:
-    1. Optionally crawls the brand's website to understand their business
-    2. Uses AI to analyze the brand and generate realistic user questions
-    3. Creates questions that mimic how real users search in AI assistants
+    This endpoint performs a 4-step research process:
+    1. Deep crawl the brand's website (20+ pages)
+    2. Use GPT to analyze website content
+    3. Use Perplexity for market research (competitors, reviews, trends)
+    4. Generate realistic user questions based on all research
 
-    The generated questions reflect actual user search behavior, not just templates.
+    The generated questions reflect actual user search behavior with specific
+    industry, competitor, and pain point references from the research.
     """
     from sqlalchemy.orm import selectinload
     from ...services.smart_question_generator import generate_smart_questions as gen_questions
@@ -301,20 +303,25 @@ async def generate_smart_questions(
     # Get competitor names
     competitor_names = [c.name for c in brand.competitors]
 
-    # Generate smart questions
-    generated = await gen_questions(
+    # Generate smart questions with full research summary
+    generation_result = await gen_questions(
         brand_name=brand.name,
         domain=brand.domain,
         industry=brand.industry,
         keywords=brand.keywords or [],
         products=brand.products or [],
         competitors=competitor_names,
-        num_questions=request.num_questions
+        num_questions=request.num_questions,
+        return_research=True  # Get research summary
     )
+
+    # Extract questions and research from result
+    generated_questions = generation_result.questions
+    research_data = generation_result.research_summary
 
     # Save questions to database
     questions = []
-    for gen_q in generated:
+    for gen_q in generated_questions:
         # Check for duplicates
         existing = await db.execute(
             select(Question).where(
@@ -338,12 +345,33 @@ async def generate_smart_questions(
     for q in questions:
         await db.refresh(q)
 
-    # Build research summary
+    # Build comprehensive research summary
     research_summary = {
+        # Brand info
         "brand_analyzed": brand.name,
-        "website_crawled": brand.domain if request.research_website else None,
-        "competitors_considered": competitor_names,
-        "question_categories": list(set(q.category for q in questions))
+        "website_domain": brand.domain,
+
+        # Website research metrics
+        "website_pages_crawled": research_data.get("website_pages_crawled", 0),
+        "products_found": research_data.get("products_found", 0),
+        "features_found": research_data.get("features_found", 0),
+        "testimonials_found": research_data.get("testimonials_found", 0),
+
+        # Perplexity market research metrics
+        "perplexity_queries_made": research_data.get("perplexity_queries_made", 0),
+        "citations_found": research_data.get("citations_found", 0),
+        "market_position": research_data.get("market_position"),
+        "customer_sentiment": research_data.get("customer_sentiment"),
+
+        # Discovered insights
+        "competitors_discovered": research_data.get("competitors_discovered", []),
+        "customer_industries": research_data.get("customer_industries", []),
+        "customer_pain_points": research_data.get("customer_pain_points", []),
+        "industry_trends": research_data.get("industry_trends", []),
+
+        # Question generation
+        "question_categories": list(set(q.category for q in questions)),
+        "research_quality_score": research_data.get("research_quality_score", 0),
     }
 
     return SmartGenerateResponse(

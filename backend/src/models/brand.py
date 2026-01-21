@@ -37,6 +37,7 @@ class Brand(Base):
     competitors = relationship("Competitor", back_populates="brand", cascade="all, delete-orphan")
     questions = relationship("Question", back_populates="brand", cascade="all, delete-orphan")
     daily_metrics = relationship("DailyMetrics", back_populates="brand", cascade="all, delete-orphan")
+    research_records = relationship("BrandResearchRecord", back_populates="brand", cascade="all, delete-orphan")
 
     def __repr__(self):
         return f"<Brand {self.name}>"

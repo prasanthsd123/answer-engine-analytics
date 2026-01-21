@@ -7,6 +7,7 @@ from .brand import Brand, Competitor
 from .question import Question
 from .execution import QueryExecution
 from .analysis import AnalysisResult, DailyMetrics
+from .brand_research import BrandResearchRecord
 
 __all__ = [
     "User",
@@ -16,4 +17,5 @@ __all__ = [
     "QueryExecution",
     "AnalysisResult",
     "DailyMetrics",
+    "BrandResearchRecord",
 ]

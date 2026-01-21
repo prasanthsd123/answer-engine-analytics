@@ -300,9 +300,41 @@ Generate diverse, realistic questions using the ACTUAL research data provided. R
         if all_competitors:
             parts.append(f"COMPETITORS: {', '.join(all_competitors[:8])}")
 
+        # === PERPLEXITY MARKET RESEARCH (NEW) ===
+        if research.perplexity_research or research.market_landscape:
+            parts.append("\n=== PERPLEXITY MARKET RESEARCH ===")
+
+            if research.market_landscape:
+                parts.append(f"MARKET LANDSCAPE: {research.market_landscape[:1500]}")
+
+            if research.market_position:
+                parts.append(f"MARKET POSITION: {research.market_position}")
+
+            if research.customer_reviews_summary:
+                parts.append(f"CUSTOMER REVIEWS SUMMARY: {research.customer_reviews_summary[:800]}")
+
+            if research.customer_sentiment:
+                parts.append(f"CUSTOMER SENTIMENT: {research.customer_sentiment}")
+
+            if research.customer_pain_points:
+                parts.append(f"CUSTOMER PAIN POINTS:\n  - " + "\n  - ".join(research.customer_pain_points[:10]))
+
+            if research.industry_trends:
+                parts.append(f"INDUSTRY TRENDS:\n  - " + "\n  - ".join(research.industry_trends[:8]))
+
+            if research.perplexity_citations:
+                parts.append(f"RESEARCH SOURCES: {len(research.perplexity_citations)} citations from G2, Capterra, industry reports")
+
+        # Research quality
+        if research.research_quality_score > 0:
+            parts.append(f"\nRESEARCH QUALITY SCORE: {research.research_quality_score:.2f}")
+
         # Pages crawled (for context)
         if research.pages_crawled:
             parts.append(f"WEBSITE PAGES ANALYZED: {len(research.pages_crawled)}")
+
+        if research.perplexity_queries_made > 0:
+            parts.append(f"PERPLEXITY QUERIES: {research.perplexity_queries_made}")
 
         return "\n\n".join(parts)
 
@@ -399,6 +431,13 @@ Generate diverse, realistic questions using the ACTUAL research data provided. R
         return questions[:20]
 
 
+@dataclass
+class SmartGenerationResult:
+    """Result of smart question generation including research data."""
+    questions: List[GeneratedQuestion]
+    research_summary: Dict[str, Any]
+
+
 async def generate_smart_questions(
     brand_name: str,
     domain: Optional[str] = None,
@@ -406,37 +445,60 @@ async def generate_smart_questions(
     keywords: List[str] = None,
     products: List[Dict] = None,
     competitors: List[str] = None,
-    num_questions: int = 20
-) -> List[GeneratedQuestion]:
+    num_questions: int = 20,
+    return_research: bool = False
+) -> List[GeneratedQuestion] | SmartGenerationResult:
     """
     Convenience function to research a brand deeply and generate questions.
 
     This is the main entry point for smart question generation.
-    It performs comprehensive website research before generating questions.
+
+    Flow:
+    1. Deep crawl brand website for products, features, testimonials
+    2. Use GPT to analyze website content
+    3. Use Perplexity for market research (competitors, reviews, trends)
+    4. Generate realistic user questions based on all research
+
+    Args:
+        brand_name: Name of the brand
+        domain: Website domain
+        industry: Industry/category
+        keywords: Known keywords
+        products: Known products
+        competitors: Known competitors
+        num_questions: Number of questions to generate
+        return_research: If True, return SmartGenerationResult with research summary
+
+    Returns:
+        List of GeneratedQuestion objects, or SmartGenerationResult if return_research=True
     """
     from .brand_researcher import BrandResearcher
 
     logger.info(f"Starting smart question generation for {brand_name}")
 
-    # Deep research of the brand
+    # Deep research of the brand (now includes Perplexity)
     researcher = BrandResearcher()
     try:
         existing_info = {
             "industry": industry,
             "keywords": keywords or [],
-            "products": products or []
+            "products": products or [],
+            "competitors": competitors or []
         }
 
-        logger.info(f"Researching brand website: {domain}")
+        logger.info(f"Researching brand: {brand_name}, domain: {domain}")
         research = await researcher.research_brand(
             brand_name=brand_name,
             domain=domain,
-            existing_info=existing_info
+            existing_info=existing_info,
+            include_perplexity=True  # Enable Perplexity research
         )
 
         logger.info(f"Research complete: {len(research.pages_crawled)} pages crawled")
         logger.info(f"Found: {len(research.products)} products, {len(research.features)} features, "
                    f"{len(research.customer_industries)} industries, {len(research.testimonials)} testimonials")
+        logger.info(f"Perplexity queries: {research.perplexity_queries_made}, "
+                   f"Citations: {len(research.perplexity_citations)}")
 
         # Override with provided industry if research didn't find one
         if industry and not research.industry:
@@ -454,4 +516,37 @@ async def generate_smart_questions(
     )
 
     logger.info(f"Generated {len(questions)} questions")
+
+    if return_research:
+        # Build comprehensive research summary
+        research_summary = {
+            # Website research
+            "website_pages_crawled": len(research.pages_crawled),
+            "products_found": len(research.products),
+            "features_found": len(research.features),
+            "testimonials_found": len(research.testimonials),
+
+            # Perplexity research
+            "perplexity_queries_made": research.perplexity_queries_made,
+            "citations_found": len(research.perplexity_citations),
+            "market_position": research.market_position,
+            "customer_sentiment": research.customer_sentiment,
+
+            # Combined insights
+            "competitors_discovered": research.competitors_mentioned[:10],
+            "customer_industries": research.customer_industries[:10],
+            "customer_pain_points": research.customer_pain_points[:10],
+            "industry_trends": research.industry_trends[:8],
+
+            # Quality
+            "research_quality_score": round(research.research_quality_score, 2),
+
+            # Sources
+            "sources": {
+                "website": research.domain,
+                "perplexity_citations": research.perplexity_citations[:10]
+            }
+        }
+        return SmartGenerationResult(questions=questions, research_summary=research_summary)
+
     return questions

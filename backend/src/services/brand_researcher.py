@@ -1,12 +1,11 @@
 """
-Brand Research Service - Deep website analysis to extract comprehensive brand information.
+Brand Research Service - Deep website analysis + Perplexity market research.
 
-This service crawls brand websites thoroughly to understand:
-- What products/services they offer
-- Who their customers are (industries, company sizes, personas)
-- Real customer testimonials and use cases
-- Pricing models and value propositions
-- Key differentiators and features
+This service performs comprehensive brand research in two phases:
+1. Website Crawling: Scrape brand website for products, features, testimonials
+2. Perplexity Research: Deep market research for competitors, reviews, trends
+
+The combined research is used to generate realistic user questions.
 """
 
 import asyncio
@@ -72,6 +71,20 @@ class BrandResearch:
     raw_content: Dict[str, str] = field(default_factory=dict)
     pages_crawled: List[str] = field(default_factory=list)
 
+    # Perplexity market research (NEW)
+    perplexity_research: Optional[Dict[str, Any]] = None
+    perplexity_citations: List[str] = field(default_factory=list)
+    market_landscape: Optional[str] = None
+    market_position: Optional[str] = None
+    customer_reviews_summary: Optional[str] = None
+    customer_sentiment: Optional[str] = None
+    customer_pain_points: List[str] = field(default_factory=list)
+    industry_trends: List[str] = field(default_factory=list)
+
+    # Research quality
+    research_quality_score: float = 0.0
+    perplexity_queries_made: int = 0
+
 
 class BrandResearcher:
     """
@@ -112,15 +125,23 @@ class BrandResearcher:
         self,
         brand_name: str,
         domain: Optional[str] = None,
-        existing_info: Optional[Dict[str, Any]] = None
+        existing_info: Optional[Dict[str, Any]] = None,
+        include_perplexity: bool = True
     ) -> BrandResearch:
         """
-        Perform deep research on a brand by crawling their website.
+        Perform comprehensive research on a brand.
+
+        Flow:
+        1. Deep crawl website for products, features, testimonials
+        2. Use GPT to analyze website content
+        3. Use Perplexity for market research (competitors, reviews, trends)
+        4. Combine all research data
 
         Args:
             brand_name: Name of the brand
             domain: Website domain (e.g., "example.com")
             existing_info: Any existing brand information
+            include_perplexity: Whether to include Perplexity market research
 
         Returns:
             BrandResearch object with comprehensive extracted information
@@ -137,14 +158,138 @@ class BrandResearcher:
         # Step 2: Extract testimonials from raw content
         self._extract_testimonials(research)
 
-        # Step 3: Use AI to analyze all collected content
+        # Step 3: Use GPT to analyze website content
         if settings.OPENAI_API_KEY and research.raw_content:
-            logger.info("Analyzing content with AI...")
+            logger.info("Analyzing website content with GPT...")
             ai_analysis = await self._analyze_with_ai(research, existing_info)
             if ai_analysis:
                 self._apply_ai_analysis(research, ai_analysis)
 
+        # Step 4: Use Perplexity for market research (NEW - Critical Flow)
+        if include_perplexity and settings.PERPLEXITY_API_KEY:
+            logger.info("Starting Perplexity market research...")
+            await self._conduct_perplexity_research(research, existing_info)
+
+        # Calculate overall research quality score
+        research.research_quality_score = self._calculate_quality_score(research)
+
         return research
+
+    async def _conduct_perplexity_research(
+        self,
+        research: BrandResearch,
+        existing_info: Optional[Dict[str, Any]]
+    ) -> None:
+        """Conduct deep market research using Perplexity."""
+        try:
+            from .perplexity_researcher import PerplexityResearcher
+
+            perplexity = PerplexityResearcher()
+
+            # Get industry from existing info or research
+            industry = research.industry
+            if not industry and existing_info:
+                industry = existing_info.get("industry", "")
+            if not industry:
+                industry = "technology"  # Default fallback
+
+            # Get known competitors
+            known_competitors = research.competitors_mentioned or []
+            if existing_info and existing_info.get("competitors"):
+                known_competitors.extend(existing_info["competitors"])
+
+            # Conduct Perplexity research
+            market_research = await perplexity.research_market(
+                brand_name=research.brand_name,
+                industry=industry,
+                domain=research.domain,
+                website_data={
+                    "products": research.products,
+                    "features": research.features,
+                    "use_cases": research.use_cases,
+                },
+                known_competitors=known_competitors
+            )
+
+            # Apply Perplexity research to main research object
+            research.perplexity_research = {
+                "market_landscape": market_research.market_landscape,
+                "market_position": market_research.market_position,
+                "competitors": market_research.competitors,
+                "competitor_comparison": market_research.competitor_comparison,
+                "customer_reviews_summary": market_research.customer_reviews_summary,
+                "customer_sentiment": market_research.customer_sentiment,
+                "customer_pain_points": market_research.customer_pain_points,
+                "industry_trends": market_research.industry_trends,
+                "pricing_analysis": market_research.pricing_analysis,
+                "key_features": market_research.key_features,
+            }
+            research.perplexity_citations = market_research.citations
+            research.perplexity_queries_made = market_research.queries_made
+
+            # Merge key data into main research
+            research.market_landscape = market_research.market_landscape
+            research.market_position = market_research.market_position
+            research.customer_reviews_summary = market_research.customer_reviews_summary
+            research.customer_sentiment = market_research.customer_sentiment
+
+            # Merge pain points (dedupe)
+            existing_pain_points = set(research.customer_pain_points)
+            for pp in market_research.customer_pain_points:
+                if pp not in existing_pain_points:
+                    research.customer_pain_points.append(pp)
+
+            # Merge industry trends
+            research.industry_trends.extend(market_research.industry_trends)
+
+            # Merge competitors (dedupe by name)
+            existing_competitors = set(c.lower() for c in research.competitors_mentioned)
+            for comp in market_research.competitors:
+                comp_name = comp.get("name", "")
+                if comp_name.lower() not in existing_competitors:
+                    research.competitors_mentioned.append(comp_name)
+
+            # Update industry if not set
+            if not research.industry and industry:
+                research.industry = industry
+
+            logger.info(f"Perplexity research complete: {market_research.queries_made} queries, "
+                       f"{len(market_research.citations)} citations")
+
+        except Exception as e:
+            logger.error(f"Perplexity research failed: {e}")
+            # Don't fail the whole research if Perplexity fails
+
+    def _calculate_quality_score(self, research: BrandResearch) -> float:
+        """Calculate overall research quality score (0-1)."""
+        score = 0.0
+
+        # Website data (40%)
+        if research.pages_crawled:
+            score += min(0.15, len(research.pages_crawled) * 0.01)
+        if research.products:
+            score += min(0.1, len(research.products) * 0.02)
+        if research.features:
+            score += min(0.1, len(research.features) * 0.01)
+        if research.testimonials:
+            score += min(0.05, len(research.testimonials) * 0.01)
+
+        # Perplexity data (40%)
+        if research.perplexity_research:
+            if research.market_landscape:
+                score += 0.1
+            if research.competitors_mentioned:
+                score += min(0.1, len(research.competitors_mentioned) * 0.02)
+            if research.customer_pain_points:
+                score += min(0.1, len(research.customer_pain_points) * 0.02)
+            if research.industry_trends:
+                score += min(0.1, len(research.industry_trends) * 0.02)
+
+        # Citations (20%)
+        if research.perplexity_citations:
+            score += min(0.2, len(research.perplexity_citations) * 0.01)
+
+        return min(1.0, score)
 
     async def _deep_crawl_website(self, domain: str, research: BrandResearch) -> None:
         """Crawl multiple pages of the website for comprehensive data."""
