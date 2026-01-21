@@ -41,26 +41,28 @@ class AnalysisRunner:
 
     def _init_adapters(self):
         """Initialize available AI adapters based on configured API keys."""
-        logger.info("Initializing AI adapters...")
-        logger.info(f"OPENAI_API_KEY configured: {bool(settings.OPENAI_API_KEY)}")
-        logger.info(f"ANTHROPIC_API_KEY configured: {bool(settings.ANTHROPIC_API_KEY)}")
-        logger.info(f"PERPLEXITY_API_KEY configured: {bool(settings.PERPLEXITY_API_KEY)}")
-        logger.info(f"GOOGLE_AI_API_KEY configured: {bool(settings.GOOGLE_AI_API_KEY)}")
+        # Use print for immediate output to logs
+        import os
+        print(f"[AnalysisRunner] Initializing AI adapters...")
+        print(f"[AnalysisRunner] OPENAI_API_KEY from settings: {bool(settings.OPENAI_API_KEY)}")
+        print(f"[AnalysisRunner] OPENAI_API_KEY from env: {bool(os.environ.get('OPENAI_API_KEY'))}")
+        print(f"[AnalysisRunner] PERPLEXITY_API_KEY from settings: {bool(settings.PERPLEXITY_API_KEY)}")
+        print(f"[AnalysisRunner] PERPLEXITY_API_KEY from env: {bool(os.environ.get('PERPLEXITY_API_KEY'))}")
 
         if settings.OPENAI_API_KEY:
             self.adapters["chatgpt"] = ChatGPTAdapter()
-            logger.info("ChatGPT adapter initialized")
+            print("[AnalysisRunner] ChatGPT adapter initialized")
         if settings.ANTHROPIC_API_KEY:
             self.adapters["claude"] = ClaudeAdapter()
-            logger.info("Claude adapter initialized")
+            print("[AnalysisRunner] Claude adapter initialized")
         if settings.PERPLEXITY_API_KEY:
             self.adapters["perplexity"] = PerplexityAdapter()
-            logger.info("Perplexity adapter initialized")
+            print("[AnalysisRunner] Perplexity adapter initialized")
         if settings.GOOGLE_AI_API_KEY:
             self.adapters["gemini"] = GeminiAdapter()
-            logger.info("Gemini adapter initialized")
+            print("[AnalysisRunner] Gemini adapter initialized")
 
-        logger.info(f"Available adapters: {list(self.adapters.keys())}")
+        print(f"[AnalysisRunner] Available adapters: {list(self.adapters.keys())}")
 
     async def run_analysis(
         self,
@@ -104,7 +106,8 @@ class AnalysisRunner:
                 selected_platforms = list(self.adapters.keys())
 
             if not selected_platforms:
-                logger.warning("No AI platforms configured")
+                print(f"[AnalysisRunner] No AI platforms configured. Available adapters: {list(self.adapters.keys())}")
+                print(f"[AnalysisRunner] Requested platforms: {platforms}")
                 return {"error": "No AI platforms configured. Please add API keys."}
 
             logger.info(f"Starting analysis with platforms: {selected_platforms}")
