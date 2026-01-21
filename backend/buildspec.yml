@@ -9,7 +9,7 @@ phases:
     commands:
       - echo Build started on `date`
       - echo Building the Docker image...
-      - docker build -t answer-engine-backend .
+      - cd backend && docker build -t answer-engine-backend .
       - docker tag answer-engine-backend:latest 211125724509.dkr.ecr.us-east-1.amazonaws.com/answer-engine/backend:latest
   post_build:
     commands:
