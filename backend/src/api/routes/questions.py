@@ -15,7 +15,8 @@ from ...models.brand import Brand
 from ...models.question import Question
 from ...schemas.question import (
     QuestionCreate, QuestionResponse, QuestionListResponse,
-    QuestionUpdate, QuestionBulkCreate, QuestionGenerateRequest
+    QuestionUpdate, QuestionBulkCreate, QuestionGenerateRequest,
+    SmartQuestionGenerateRequest, SmartGenerateResponse
 )
 from ..deps import get_current_user
 
@@ -261,6 +262,95 @@ async def generate_questions(
         await db.refresh(q)
 
     return questions
+
+
+@router.post("/brand/{brand_id}/generate-smart", response_model=SmartGenerateResponse, status_code=status.HTTP_201_CREATED)
+async def generate_smart_questions(
+    brand_id: UUID,
+    request: SmartQuestionGenerateRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """
+    Generate smart questions using AI based on brand research.
+
+    This endpoint:
+    1. Optionally crawls the brand's website to understand their business
+    2. Uses AI to analyze the brand and generate realistic user questions
+    3. Creates questions that mimic how real users search in AI assistants
+
+    The generated questions reflect actual user search behavior, not just templates.
+    """
+    from sqlalchemy.orm import selectinload
+    from ...services.smart_question_generator import generate_smart_questions as gen_questions
+
+    # Get brand with competitors
+    result = await db.execute(
+        select(Brand)
+        .options(selectinload(Brand.competitors))
+        .where(Brand.id == brand_id, Brand.user_id == current_user.id)
+    )
+    brand = result.scalar_one_or_none()
+
+    if not brand:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Brand not found"
+        )
+
+    # Get competitor names
+    competitor_names = [c.name for c in brand.competitors]
+
+    # Generate smart questions
+    generated = await gen_questions(
+        brand_name=brand.name,
+        domain=brand.domain,
+        industry=brand.industry,
+        keywords=brand.keywords or [],
+        products=brand.products or [],
+        competitors=competitor_names,
+        num_questions=request.num_questions
+    )
+
+    # Save questions to database
+    questions = []
+    for gen_q in generated:
+        # Check for duplicates
+        existing = await db.execute(
+            select(Question).where(
+                Question.brand_id == brand_id,
+                Question.question_text == gen_q.text
+            )
+        )
+        if existing.scalar_one_or_none():
+            continue
+
+        question = Question(
+            brand_id=brand_id,
+            question_text=gen_q.text,
+            category=gen_q.category
+        )
+        db.add(question)
+        questions.append(question)
+
+    await db.commit()
+
+    for q in questions:
+        await db.refresh(q)
+
+    # Build research summary
+    research_summary = {
+        "brand_analyzed": brand.name,
+        "website_crawled": brand.domain if request.research_website else None,
+        "competitors_considered": competitor_names,
+        "question_categories": list(set(q.category for q in questions))
+    }
+
+    return SmartGenerateResponse(
+        questions_generated=len(questions),
+        questions=questions,
+        research_summary=research_summary
+    )
 
 
 @router.get("/{question_id}", response_model=QuestionResponse)

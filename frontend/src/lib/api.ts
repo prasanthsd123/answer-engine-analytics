@@ -126,6 +126,18 @@ export const questionApi = {
     return response.data;
   },
 
+  generateSmart: async (brandId: string, options?: {
+    num_questions?: number;
+    research_website?: boolean;
+    focus_intents?: string[];
+  }) => {
+    const response = await api.post(
+      `/api/questions/brand/${brandId}/generate-smart`,
+      options || { num_questions: 20, research_website: true }
+    );
+    return response.data;
+  },
+
   delete: async (questionId: string) => {
     await api.delete(`/api/questions/${questionId}`);
   },

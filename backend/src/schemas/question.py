@@ -56,3 +56,34 @@ class QuestionGenerateRequest(BaseModel):
     categories: Optional[List[str]] = None  # If None, generate for all categories
     include_competitors: bool = True
     max_questions_per_category: int = Field(default=5, ge=1, le=20)
+
+
+class SmartQuestionGenerateRequest(BaseModel):
+    """Schema for AI-powered smart question generation."""
+    num_questions: int = Field(default=20, ge=5, le=50)
+    research_website: bool = Field(
+        default=True,
+        description="Whether to crawl the brand's website for research"
+    )
+    focus_intents: Optional[List[str]] = Field(
+        default=None,
+        description="Specific intents to focus on: discovery, comparison, evaluation, feature, problem_solving, review, pricing"
+    )
+
+
+class SmartQuestionResponse(BaseModel):
+    """Response for a smart-generated question."""
+    text: str
+    category: str
+    intent: str
+    priority: int
+
+    class Config:
+        from_attributes = True
+
+
+class SmartGenerateResponse(BaseModel):
+    """Response for smart question generation."""
+    questions_generated: int
+    questions: List[QuestionResponse]
+    research_summary: Optional[dict] = None
