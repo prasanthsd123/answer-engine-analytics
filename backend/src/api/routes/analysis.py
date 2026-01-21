@@ -324,10 +324,42 @@ async def trigger_analysis(
     if not result.scalar_one_or_none():
         raise HTTPException(status_code=404, detail="Brand not found")
 
-    # In production, this would trigger Celery tasks
-    # For now, return accepted status
+    from ...services.analysis_runner import AnalysisRunner
+
+    # Run analysis in background
+    async def run_analysis_task():
+        runner = AnalysisRunner()
+        await runner.run_analysis(brand_id, platforms)
+
+    background_tasks.add_task(run_analysis_task)
+
     return {
-        "message": "Analysis triggered",
+        "message": "Analysis started",
         "brand_id": str(brand_id),
-        "platforms": platforms or ["chatgpt", "claude", "perplexity", "gemini"]
+        "platforms": platforms or ["chatgpt", "claude", "perplexity", "gemini"],
+        "status": "running"
     }
+
+
+@router.post("/brand/{brand_id}/run-sync")
+async def run_analysis_sync(
+    brand_id: UUID,
+    platforms: Optional[List[str]] = Query(None, description="Platforms to query"),
+    max_questions: int = Query(5, ge=1, le=20, description="Max questions to process"),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """Run analysis synchronously and return results (for testing/debugging)."""
+    # Verify brand ownership
+    result = await db.execute(
+        select(Brand).where(Brand.id == brand_id, Brand.user_id == current_user.id)
+    )
+    if not result.scalar_one_or_none():
+        raise HTTPException(status_code=404, detail="Brand not found")
+
+    from ...services.analysis_runner import AnalysisRunner
+
+    runner = AnalysisRunner()
+    results = await runner.run_analysis(brand_id, platforms, max_questions)
+
+    return results
