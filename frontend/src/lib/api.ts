@@ -56,6 +56,11 @@ export const authApi = {
     const response = await api.get("/api/auth/me");
     return response.data;
   },
+
+  googleAuth: async (credential: string) => {
+    const response = await api.post("/api/auth/google", { credential });
+    return response.data;
+  },
 };
 
 // Brand APIs
