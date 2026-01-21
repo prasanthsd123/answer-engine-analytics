@@ -1,19 +1,22 @@
 "use client";
 
 import { useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { Play, RefreshCw, CheckCircle, AlertCircle } from "lucide-react";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
 import { TrendChart } from "@/components/charts/TrendChart";
 import { brandApi, analysisApi } from "@/lib/api";
 import { cn, getSentimentColor } from "@/lib/utils";
 
-const PLATFORMS = ["chatgpt", "claude", "perplexity", "gemini"];
+const PLATFORMS = ["chatgpt", "perplexity"] as const;
 
 export default function AnalysisPage() {
   const [selectedBrandId, setSelectedBrandId] = useState<string>("");
   const [selectedPlatform, setSelectedPlatform] = useState<string>("all");
   const [timeRange, setTimeRange] = useState<number>(30);
+  const [analysisStatus, setAnalysisStatus] = useState<"idle" | "running" | "success" | "error">("idle");
+  const queryClient = useQueryClient();
 
   const { data: brandsData } = useQuery({
     queryKey: ["brands"],
@@ -22,6 +25,28 @@ export default function AnalysisPage() {
 
   const brands = brandsData?.items || [];
   const activeBrandId = selectedBrandId || brands[0]?.id;
+
+  const runAnalysisMutation = useMutation({
+    mutationFn: () => analysisApi.triggerAnalysis(activeBrandId, [...PLATFORMS]),
+    onMutate: () => {
+      setAnalysisStatus("running");
+    },
+    onSuccess: () => {
+      setAnalysisStatus("success");
+      // Refresh data after a delay to allow analysis to complete
+      setTimeout(() => {
+        queryClient.invalidateQueries({ queryKey: ["competitors", activeBrandId] });
+        queryClient.invalidateQueries({ queryKey: ["trends", activeBrandId] });
+        queryClient.invalidateQueries({ queryKey: ["overview", activeBrandId] });
+      }, 5000);
+      // Reset status after showing success
+      setTimeout(() => setAnalysisStatus("idle"), 10000);
+    },
+    onError: () => {
+      setAnalysisStatus("error");
+      setTimeout(() => setAnalysisStatus("idle"), 5000);
+    },
+  });
 
   const { data: competitorData } = useQuery({
     queryKey: ["competitors", activeBrandId, timeRange],
@@ -72,8 +97,67 @@ export default function AnalysisPage() {
             <option value={30}>Last 30 days</option>
             <option value={90}>Last 90 days</option>
           </select>
+          <Button
+            onClick={() => runAnalysisMutation.mutate()}
+            disabled={!activeBrandId || analysisStatus === "running"}
+            className={cn(
+              analysisStatus === "success" && "bg-green-600 hover:bg-green-700",
+              analysisStatus === "error" && "bg-red-600 hover:bg-red-700"
+            )}
+          >
+            {analysisStatus === "running" ? (
+              <>
+                <RefreshCw className="w-4 h-4 mr-2 animate-spin" />
+                Running Analysis...
+              </>
+            ) : analysisStatus === "success" ? (
+              <>
+                <CheckCircle className="w-4 h-4 mr-2" />
+                Analysis Complete
+              </>
+            ) : analysisStatus === "error" ? (
+              <>
+                <AlertCircle className="w-4 h-4 mr-2" />
+                Analysis Failed
+              </>
+            ) : (
+              <>
+                <Play className="w-4 h-4 mr-2" />
+                Run Analysis
+              </>
+            )}
+          </Button>
         </div>
       </div>
+
+      {/* Analysis Status Banner */}
+      {analysisStatus === "running" && (
+        <div className="mb-6 p-4 bg-blue-50 border border-blue-200 rounded-lg">
+          <div className="flex items-center">
+            <RefreshCw className="w-5 h-5 mr-3 text-blue-600 animate-spin" />
+            <div>
+              <p className="font-medium text-blue-800">Analysis in Progress</p>
+              <p className="text-sm text-blue-600">
+                Querying ChatGPT and Perplexity with your questions. This may take a few minutes...
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {analysisStatus === "success" && (
+        <div className="mb-6 p-4 bg-green-50 border border-green-200 rounded-lg">
+          <div className="flex items-center">
+            <CheckCircle className="w-5 h-5 mr-3 text-green-600" />
+            <div>
+              <p className="font-medium text-green-800">Analysis Complete</p>
+              <p className="text-sm text-green-600">
+                Results are being processed. Dashboard will update shortly.
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Competitor Comparison */}
       <Card className="mb-6">
