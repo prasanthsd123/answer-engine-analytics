@@ -1,0 +1,23 @@
+version: 0.2
+
+phases:
+  pre_build:
+    commands:
+      - echo Logging in to Amazon ECR...
+      - aws ecr get-login-password --region us-east-1 | docker login --username AWS --password-stdin 211125724509.dkr.ecr.us-east-1.amazonaws.com
+  build:
+    commands:
+      - echo Build started on `date`
+      - echo Building the Docker image...
+      - docker build -t answer-engine-backend .
+      - docker tag answer-engine-backend:latest 211125724509.dkr.ecr.us-east-1.amazonaws.com/answer-engine/backend:latest
+  post_build:
+    commands:
+      - echo Build completed on `date`
+      - echo Pushing the Docker image...
+      - docker push 211125724509.dkr.ecr.us-east-1.amazonaws.com/answer-engine/backend:latest
+      - echo Writing image definitions file...
+      - printf '[{"name":"backend","imageUri":"211125724509.dkr.ecr.us-east-1.amazonaws.com/answer-engine/backend:latest"}]' > imagedefinitions.json
+
+artifacts:
+  files: imagedefinitions.json
