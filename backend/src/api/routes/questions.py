@@ -282,9 +282,13 @@ async def generate_smart_questions(
 
     The generated questions reflect actual user search behavior with specific
     industry, competitor, and pain point references from the research.
+
+    Research is cached for 30 days to save API costs.
     """
+    from datetime import datetime, timedelta
     from sqlalchemy.orm import selectinload
     from ...services.smart_question_generator import generate_smart_questions as gen_questions
+    from ...models.brand_research import BrandResearchRecord
 
     # Get brand with competitors
     result = await db.execute(
@@ -318,6 +322,36 @@ async def generate_smart_questions(
     # Extract questions and research from result
     generated_questions = generation_result.questions
     research_data = generation_result.research_summary
+
+    # Save research to database for caching (30 days)
+    try:
+        research_record = BrandResearchRecord(
+            brand_id=brand_id,
+            # Website data
+            pages_crawled=research_data.get("website_pages_crawled", 0),
+            products_discovered=research_data.get("products_found", []) if isinstance(research_data.get("products_found"), list) else [],
+            features_discovered=research_data.get("features_found", []) if isinstance(research_data.get("features_found"), list) else [],
+            # Perplexity research
+            perplexity_queries_made=research_data.get("perplexity_queries_made", 0),
+            perplexity_citations=research_data.get("sources", {}).get("perplexity_citations", []) if isinstance(research_data.get("sources"), dict) else [],
+            market_position=research_data.get("market_position"),
+            # Customer insights
+            discovered_competitors=research_data.get("competitors_discovered", []),
+            customer_industries=research_data.get("customer_industries", []),
+            customer_pain_points=research_data.get("customer_pain_points", []),
+            industry_trends=research_data.get("industry_trends", []),
+            industry=brand.industry,
+            # Quality
+            research_quality_score=research_data.get("research_quality_score", 0),
+            research_sources_count=research_data.get("citations_found", 0),
+            is_complete=True,
+            expires_at=datetime.utcnow() + timedelta(days=30)
+        )
+        db.add(research_record)
+    except Exception as e:
+        # Don't fail the request if research save fails
+        import logging
+        logging.getLogger(__name__).error(f"Failed to save research record: {e}")
 
     # Save questions to database
     questions = []
@@ -379,6 +413,85 @@ async def generate_smart_questions(
         questions=questions,
         research_summary=research_summary
     )
+
+
+@router.get("/brand/{brand_id}/research")
+async def get_brand_research(
+    brand_id: UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """
+    Get the stored research data for a brand.
+
+    Returns the most recent research record with all Perplexity market intelligence,
+    discovered competitors, customer pain points, and industry trends.
+    """
+    from ...models.brand_research import BrandResearchRecord
+
+    # Verify brand ownership
+    await verify_brand_ownership(brand_id, current_user.id, db)
+
+    # Get latest research for this brand
+    result = await db.execute(
+        select(BrandResearchRecord)
+        .where(BrandResearchRecord.brand_id == brand_id)
+        .order_by(BrandResearchRecord.created_at.desc())
+        .limit(1)
+    )
+    research = result.scalar_one_or_none()
+
+    if not research:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="No research found for this brand. Generate smart questions first."
+        )
+
+    return {
+        "id": str(research.id),
+        "brand_id": str(research.brand_id),
+        "created_at": research.created_at.isoformat() if research.created_at else None,
+        "expires_at": research.expires_at.isoformat() if research.expires_at else None,
+        "is_expired": research.is_expired,
+        "is_complete": research.is_complete,
+
+        # Website research
+        "website_data": {
+            "pages_crawled": research.pages_crawled,
+            "products_discovered": research.products_discovered or [],
+            "features_discovered": research.features_discovered or [],
+            "raw_content": research.website_raw_content or {}
+        },
+
+        # Perplexity market research
+        "perplexity_research": {
+            "queries_made": research.perplexity_queries_made,
+            "citations": research.perplexity_citations or [],
+            "market_landscape": research.market_landscape,
+            "market_position": research.market_position,
+            "customer_reviews_summary": research.customer_reviews_summary,
+            "competitor_comparison": research.competitor_comparison or {}
+        },
+
+        # Combined insights
+        "insights": {
+            "discovered_competitors": research.discovered_competitors or [],
+            "customer_industries": research.customer_industries or [],
+            "customer_personas": research.customer_personas or [],
+            "customer_company_sizes": research.customer_company_sizes or [],
+            "customer_pain_points": research.customer_pain_points or [],
+            "use_cases": research.use_cases or [],
+            "industry": research.industry,
+            "industry_trends": research.industry_trends or [],
+            "pricing_analysis": research.pricing_analysis or {}
+        },
+
+        # Quality metrics
+        "quality": {
+            "research_quality_score": research.research_quality_score,
+            "research_sources_count": research.research_sources_count
+        }
+    }
 
 
 @router.get("/{question_id}", response_model=QuestionResponse)
