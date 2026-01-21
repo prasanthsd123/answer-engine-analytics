@@ -304,21 +304,42 @@ class BrandResearcher:
 
     async def _deep_crawl_website(self, domain: str, research: BrandResearch) -> None:
         """Crawl multiple pages of the website for comprehensive data."""
-        base_urls = [f"https://{domain}", f"https://www.{domain}"]
+        # Normalize domain - handle both "example.com" and "https://www.example.com/"
+        clean_domain = domain.strip()
+
+        # Remove protocol if present
+        if clean_domain.startswith("https://"):
+            clean_domain = clean_domain[8:]
+        elif clean_domain.startswith("http://"):
+            clean_domain = clean_domain[7:]
+
+        # Remove www. prefix if present
+        if clean_domain.startswith("www."):
+            clean_domain = clean_domain[4:]
+
+        # Remove trailing slash
+        clean_domain = clean_domain.rstrip("/")
+
+        logger.info(f"Normalized domain: {domain} -> {clean_domain}")
+
+        base_urls = [f"https://{clean_domain}", f"https://www.{clean_domain}"]
 
         # Find working base URL
         base_url = None
         for url in base_urls:
             try:
+                logger.info(f"Trying URL: {url}")
                 response = await self.http_client.get(url)
                 if response.status_code == 200:
                     base_url = str(response.url).rstrip('/')
+                    logger.info(f"Successfully connected to: {base_url}")
                     break
-            except Exception:
+            except Exception as e:
+                logger.warning(f"Failed to connect to {url}: {e}")
                 continue
 
         if not base_url:
-            logger.warning(f"Could not connect to {domain}")
+            logger.warning(f"Could not connect to {domain} (cleaned: {clean_domain})")
             return
 
         # Crawl all target pages concurrently
