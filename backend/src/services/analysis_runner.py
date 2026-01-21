@@ -3,10 +3,13 @@ Analysis runner service - orchestrates querying AI platforms and analyzing respo
 """
 
 import asyncio
+import logging
 import re
 from datetime import date, datetime
 from typing import List, Optional, Dict, Any
 from uuid import UUID
+
+logger = logging.getLogger(__name__)
 
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
@@ -38,14 +41,26 @@ class AnalysisRunner:
 
     def _init_adapters(self):
         """Initialize available AI adapters based on configured API keys."""
+        logger.info("Initializing AI adapters...")
+        logger.info(f"OPENAI_API_KEY configured: {bool(settings.OPENAI_API_KEY)}")
+        logger.info(f"ANTHROPIC_API_KEY configured: {bool(settings.ANTHROPIC_API_KEY)}")
+        logger.info(f"PERPLEXITY_API_KEY configured: {bool(settings.PERPLEXITY_API_KEY)}")
+        logger.info(f"GOOGLE_AI_API_KEY configured: {bool(settings.GOOGLE_AI_API_KEY)}")
+
         if settings.OPENAI_API_KEY:
             self.adapters["chatgpt"] = ChatGPTAdapter()
+            logger.info("ChatGPT adapter initialized")
         if settings.ANTHROPIC_API_KEY:
             self.adapters["claude"] = ClaudeAdapter()
+            logger.info("Claude adapter initialized")
         if settings.PERPLEXITY_API_KEY:
             self.adapters["perplexity"] = PerplexityAdapter()
+            logger.info("Perplexity adapter initialized")
         if settings.GOOGLE_AI_API_KEY:
             self.adapters["gemini"] = GeminiAdapter()
+            logger.info("Gemini adapter initialized")
+
+        logger.info(f"Available adapters: {list(self.adapters.keys())}")
 
     async def run_analysis(
         self,
@@ -89,7 +104,10 @@ class AnalysisRunner:
                 selected_platforms = list(self.adapters.keys())
 
             if not selected_platforms:
+                logger.warning("No AI platforms configured")
                 return {"error": "No AI platforms configured. Please add API keys."}
+
+            logger.info(f"Starting analysis with platforms: {selected_platforms}")
 
             results = {
                 "brand_id": str(brand_id),
@@ -101,13 +119,17 @@ class AnalysisRunner:
 
             # Process each question
             for question in questions:
+                logger.info(f"Processing question: {question.question_text[:50]}...")
                 for platform in selected_platforms:
                     try:
+                        logger.info(f"Querying {platform} for question {question.id}")
                         execution_result = await self._process_question(
                             db, brand, question, platform
                         )
                         results["executions"].append(execution_result)
+                        logger.info(f"Completed {platform} query: mentioned={execution_result.get('brand_mentioned')}")
                     except Exception as e:
+                        logger.error(f"Error processing {platform} for question {question.id}: {str(e)}", exc_info=True)
                         results["executions"].append({
                             "question_id": str(question.id),
                             "platform": platform,

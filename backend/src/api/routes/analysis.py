@@ -2,6 +2,8 @@
 Analysis and metrics API routes.
 """
 
+import asyncio
+import logging
 from datetime import date, timedelta
 from typing import Optional, List
 from uuid import UUID
@@ -10,6 +12,8 @@ from fastapi import APIRouter, Depends, HTTPException, status, Query, Background
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func, and_
 from sqlalchemy.orm import selectinload
+
+logger = logging.getLogger(__name__)
 
 from ...database import get_db
 from ...models.user import User
@@ -326,12 +330,18 @@ async def trigger_analysis(
 
     from ...services.analysis_runner import AnalysisRunner
 
-    # Run analysis in background
+    # Run analysis in background using asyncio.create_task
     async def run_analysis_task():
-        runner = AnalysisRunner()
-        await runner.run_analysis(brand_id, platforms)
+        try:
+            logger.info(f"Starting analysis for brand {brand_id} on platforms {platforms}")
+            runner = AnalysisRunner()
+            results = await runner.run_analysis(brand_id, platforms)
+            logger.info(f"Analysis completed for brand {brand_id}: {results}")
+        except Exception as e:
+            logger.error(f"Analysis failed for brand {brand_id}: {str(e)}", exc_info=True)
 
-    background_tasks.add_task(run_analysis_task)
+    # Use asyncio.create_task for proper async execution
+    asyncio.create_task(run_analysis_task())
 
     return {
         "message": "Analysis started",
