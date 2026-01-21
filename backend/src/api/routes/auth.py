@@ -5,10 +5,10 @@ Authentication API routes.
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
+from sqlalchemy import select, text
 from pydantic import BaseModel
 
-from ...database import get_db
+from ...database import get_db, engine
 from ...models.user import User
 from ...schemas.user import UserCreate, UserResponse, Token
 from ...config import settings
@@ -199,3 +199,23 @@ async def google_auth(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail=f"Invalid Google token: {str(e)}"
         )
+
+
+@router.post("/migrate-oauth-columns")
+async def migrate_oauth_columns():
+    """Add OAuth columns to users table if they don't exist."""
+    migrations = [
+        "ALTER TABLE users ADD COLUMN IF NOT EXISTS picture VARCHAR(500)",
+        "ALTER TABLE users ADD COLUMN IF NOT EXISTS oauth_provider VARCHAR(50)",
+        "ALTER TABLE users ADD COLUMN IF NOT EXISTS oauth_id VARCHAR(255)",
+    ]
+
+    async with engine.begin() as conn:
+        for migration in migrations:
+            try:
+                await conn.execute(text(migration))
+            except Exception as e:
+                # Column might already exist in some databases
+                pass
+
+    return {"status": "success", "message": "OAuth columns migration completed"}

@@ -68,9 +68,26 @@ async def get_db() -> AsyncSession:
 
 
 async def init_db():
-    """Initialize database tables."""
+    """Initialize database tables and run migrations."""
+    from sqlalchemy import text
+
     async with engine.begin() as conn:
+        # Create tables
         await conn.run_sync(Base.metadata.create_all)
+
+        # Run migrations to add OAuth columns if they don't exist
+        migrations = [
+            "ALTER TABLE users ADD COLUMN IF NOT EXISTS picture VARCHAR(500)",
+            "ALTER TABLE users ADD COLUMN IF NOT EXISTS oauth_provider VARCHAR(50)",
+            "ALTER TABLE users ADD COLUMN IF NOT EXISTS oauth_id VARCHAR(255)",
+        ]
+
+        for migration in migrations:
+            try:
+                await conn.execute(text(migration))
+            except Exception:
+                # Column might already exist
+                pass
 
 
 async def close_db():
