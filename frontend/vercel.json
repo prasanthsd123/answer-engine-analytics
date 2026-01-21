@@ -3,7 +3,7 @@
   "outputDirectory": ".next",
   "framework": "nextjs",
   "env": {
-    "NEXT_PUBLIC_API_URL": "http://answer-engine-alb-157996493.us-east-1.elb.amazonaws.com",
+    "BACKEND_URL": "http://answer-engine-alb-157996493.us-east-1.elb.amazonaws.com",
     "NEXT_PUBLIC_GOOGLE_CLIENT_ID": "232634691806-k7vpcif4kb7uomgdnbltc2ai9j0ptirb.apps.googleusercontent.com"
   }
 }
