@@ -1,10 +1,14 @@
 "use client";
 
 import { useState } from "react";
-import { useAuth } from "@/contexts/AuthContext";
+import { useQuery } from "@tanstack/react-query";
+import { authApi } from "@/lib/api";
 
 export default function SettingsPage() {
-  const { user } = useAuth();
+  const { data: user } = useQuery({
+    queryKey: ["user"],
+    queryFn: authApi.getMe,
+  });
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState<{ type: 'success' | 'error', text: string } | null>(null);
 
