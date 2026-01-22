@@ -316,7 +316,8 @@ async def generate_smart_questions(
         products=brand.products or [],
         competitors=competitor_names,
         num_questions=request.num_questions,
-        return_research=True  # Get research summary
+        return_research=True,  # Get research summary
+        additional_urls=request.additional_urls  # User-provided URLs for small sites
     )
 
     # Extract questions and research from result

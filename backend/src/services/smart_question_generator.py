@@ -446,18 +446,21 @@ async def generate_smart_questions(
     products: List[Dict] = None,
     competitors: List[str] = None,
     num_questions: int = 20,
-    return_research: bool = False
+    return_research: bool = False,
+    additional_urls: Optional[List[str]] = None
 ) -> List[GeneratedQuestion] | SmartGenerationResult:
     """
     Convenience function to research a brand deeply and generate questions.
 
     This is the main entry point for smart question generation.
 
-    Flow:
-    1. Deep crawl brand website for products, features, testimonials
-    2. Use GPT to analyze website content
-    3. Use Perplexity for market research (competitors, reviews, trends)
-    4. Generate realistic user questions based on all research
+    Smart Flow:
+    1. Check sitemap.xml for actual pages
+    2. Parse navigation/footer links from homepage
+    3. Crawl discovered + user-provided URLs
+    4. Use GPT to analyze website content
+    5. Use Perplexity for market research (competitors, reviews, trends)
+    6. Generate realistic user questions based on all research
 
     Args:
         brand_name: Name of the brand
@@ -468,6 +471,7 @@ async def generate_smart_questions(
         competitors: Known competitors
         num_questions: Number of questions to generate
         return_research: If True, return SmartGenerationResult with research summary
+        additional_urls: User-provided URLs to crawl (for small websites)
 
     Returns:
         List of GeneratedQuestion objects, or SmartGenerationResult if return_research=True
@@ -487,11 +491,14 @@ async def generate_smart_questions(
         }
 
         logger.info(f"Researching brand: {brand_name}, domain: {domain}")
+        if additional_urls:
+            logger.info(f"User provided {len(additional_urls)} additional URLs")
         research = await researcher.research_brand(
             brand_name=brand_name,
             domain=domain,
             existing_info=existing_info,
-            include_perplexity=True  # Enable Perplexity research
+            include_perplexity=True,  # Enable Perplexity research
+            additional_urls=additional_urls  # User-provided URLs for small sites
         )
 
         logger.info(f"Research complete: {len(research.pages_crawled)} pages crawled")

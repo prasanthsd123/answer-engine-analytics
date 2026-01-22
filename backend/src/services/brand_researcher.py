@@ -90,18 +90,15 @@ class BrandResearcher:
     """
     Deep website researcher that extracts comprehensive brand information.
 
-    Crawls multiple pages including:
-    - Homepage
-    - About/Company pages
-    - Products/Features/Solutions pages
-    - Pricing page
-    - Customers/Case Studies pages
-    - Use Cases pages
+    Smart crawling approach:
+    1. First checks sitemap.xml for actual pages
+    2. Parses navigation and footer links from homepage
+    3. Falls back to common paths only if needed
+    4. Accepts user-provided additional URLs
     """
 
-    # Pages to crawl for comprehensive research
-    PAGES_TO_CRAWL = [
-        "",  # Homepage
+    # Fallback paths - only used if sitemap/navigation don't provide enough
+    FALLBACK_PATHS = [
         "about", "about-us", "company",
         "products", "product", "features", "solutions", "platform",
         "pricing", "plans",
@@ -109,6 +106,17 @@ class BrandResearcher:
         "use-cases", "usecases", "industries", "who-we-serve",
         "why-us", "why", "compare", "vs",
         "integrations", "apps", "marketplace",
+    ]
+
+    # Keywords to prioritize in discovered URLs
+    PRIORITY_KEYWORDS = [
+        "customer", "case-stud", "testimonial", "success", "review",
+        "pricing", "price", "plan",
+        "feature", "product", "solution", "platform",
+        "about", "company", "team",
+        "use-case", "industry", "who-we-serve",
+        "compare", "vs", "alternative",
+        "integration", "partner",
     ]
 
     def __init__(self):
@@ -120,39 +128,46 @@ class BrandResearcher:
             }
         )
         self.visited_urls: Set[str] = set()
+        self.discovered_urls: Set[str] = set()
 
     async def research_brand(
         self,
         brand_name: str,
         domain: Optional[str] = None,
         existing_info: Optional[Dict[str, Any]] = None,
-        include_perplexity: bool = True
+        include_perplexity: bool = True,
+        additional_urls: Optional[List[str]] = None
     ) -> BrandResearch:
         """
         Perform comprehensive research on a brand.
 
-        Flow:
-        1. Deep crawl website for products, features, testimonials
-        2. Use GPT to analyze website content
-        3. Use Perplexity for market research (competitors, reviews, trends)
-        4. Combine all research data
+        Smart Flow:
+        1. Check sitemap.xml for actual pages
+        2. Parse navigation/footer links from homepage
+        3. Crawl discovered pages (prioritizing relevant ones)
+        4. Fall back to common paths if needed
+        5. Crawl any user-provided additional URLs
+        6. Use GPT to analyze website content
+        7. Use Perplexity for market research (competitors, reviews, trends)
 
         Args:
             brand_name: Name of the brand
             domain: Website domain (e.g., "example.com")
             existing_info: Any existing brand information
             include_perplexity: Whether to include Perplexity market research
+            additional_urls: User-provided URLs to crawl (for small/custom sites)
 
         Returns:
             BrandResearch object with comprehensive extracted information
         """
         research = BrandResearch(brand_name=brand_name, domain=domain or "")
         self.visited_urls.clear()
+        self.discovered_urls.clear()
 
-        # Step 1: Deep crawl website if domain provided
+        # Step 1: Smart crawl website if domain provided
         if domain:
-            logger.info(f"Starting deep crawl of {domain}")
-            await self._deep_crawl_website(domain, research)
+            logger.info(f"Starting smart crawl of {domain}")
+            await self._smart_crawl_website(domain, research, additional_urls)
             logger.info(f"Crawled {len(research.pages_crawled)} pages from {domain}")
 
         # Step 2: Extract testimonials from raw content
@@ -302,9 +317,73 @@ class BrandResearcher:
 
         return min(1.0, score)
 
-    async def _deep_crawl_website(self, domain: str, research: BrandResearch) -> None:
-        """Crawl multiple pages of the website for comprehensive data."""
-        # Normalize domain - handle both "example.com" and "https://www.example.com/"
+    async def _smart_crawl_website(
+        self,
+        domain: str,
+        research: BrandResearch,
+        additional_urls: Optional[List[str]] = None
+    ) -> None:
+        """
+        Smart crawl website by discovering actual pages first.
+
+        Strategy:
+        1. Try sitemap.xml to find all pages
+        2. Parse homepage navigation and footer for links
+        3. Prioritize relevant pages (customers, pricing, features, etc.)
+        4. Fall back to common paths only if not enough pages found
+        5. Include any user-provided additional URLs
+        """
+        # Normalize domain
+        clean_domain = self._normalize_domain(domain)
+        if not clean_domain:
+            return
+
+        # Find working base URL
+        base_url = await self._find_base_url(clean_domain)
+        if not base_url:
+            logger.warning(f"Could not connect to {domain}")
+            return
+
+        logger.info(f"Connected to: {base_url}")
+
+        # Step 1: Try to get sitemap
+        sitemap_urls = await self._parse_sitemap(base_url)
+        if sitemap_urls:
+            logger.info(f"Found {len(sitemap_urls)} URLs in sitemap")
+            self.discovered_urls.update(sitemap_urls)
+
+        # Step 2: Crawl homepage and extract navigation links
+        homepage_soup = await self._crawl_and_get_soup(base_url, research)
+        if homepage_soup:
+            nav_urls = self._extract_navigation_links(homepage_soup, base_url)
+            logger.info(f"Found {len(nav_urls)} URLs from navigation/footer")
+            self.discovered_urls.update(nav_urls)
+
+        # Step 3: Add user-provided URLs
+        if additional_urls:
+            for url in additional_urls:
+                if url.startswith("http"):
+                    self.discovered_urls.add(url)
+                else:
+                    self.discovered_urls.add(f"{base_url}/{url.lstrip('/')}")
+            logger.info(f"Added {len(additional_urls)} user-provided URLs")
+
+        # Step 4: If not enough pages discovered, try fallback paths
+        if len(self.discovered_urls) < 5:
+            logger.info("Few pages discovered, trying fallback paths...")
+            for path in self.FALLBACK_PATHS:
+                self.discovered_urls.add(f"{base_url}/{path}")
+
+        # Step 5: Prioritize and limit URLs to crawl
+        urls_to_crawl = self._prioritize_urls(list(self.discovered_urls), max_urls=25)
+        logger.info(f"Will crawl {len(urls_to_crawl)} prioritized URLs")
+
+        # Step 6: Crawl all discovered pages concurrently
+        tasks = [self._crawl_page(url, research) for url in urls_to_crawl]
+        await asyncio.gather(*tasks, return_exceptions=True)
+
+    def _normalize_domain(self, domain: str) -> Optional[str]:
+        """Normalize domain string."""
         clean_domain = domain.strip()
 
         # Remove protocol if present
@@ -320,35 +399,145 @@ class BrandResearcher:
         # Remove trailing slash
         clean_domain = clean_domain.rstrip("/")
 
-        logger.info(f"Normalized domain: {domain} -> {clean_domain}")
+        return clean_domain if clean_domain else None
 
+    async def _find_base_url(self, clean_domain: str) -> Optional[str]:
+        """Find working base URL for the domain."""
         base_urls = [f"https://{clean_domain}", f"https://www.{clean_domain}"]
 
-        # Find working base URL
-        base_url = None
         for url in base_urls:
             try:
-                logger.info(f"Trying URL: {url}")
                 response = await self.http_client.get(url)
                 if response.status_code == 200:
-                    base_url = str(response.url).rstrip('/')
-                    logger.info(f"Successfully connected to: {base_url}")
-                    break
+                    return str(response.url).rstrip('/')
             except Exception as e:
-                logger.warning(f"Failed to connect to {url}: {e}")
+                logger.debug(f"Failed to connect to {url}: {e}")
                 continue
 
-        if not base_url:
-            logger.warning(f"Could not connect to {domain} (cleaned: {clean_domain})")
-            return
+        return None
 
-        # Crawl all target pages concurrently
-        tasks = []
-        for page_path in self.PAGES_TO_CRAWL:
-            url = f"{base_url}/{page_path}" if page_path else base_url
-            tasks.append(self._crawl_page(url, research))
+    async def _parse_sitemap(self, base_url: str) -> Set[str]:
+        """Parse sitemap.xml to discover all pages."""
+        urls = set()
+        sitemap_locations = [
+            f"{base_url}/sitemap.xml",
+            f"{base_url}/sitemap_index.xml",
+            f"{base_url}/sitemap/sitemap.xml",
+        ]
 
-        await asyncio.gather(*tasks, return_exceptions=True)
+        for sitemap_url in sitemap_locations:
+            try:
+                response = await self.http_client.get(sitemap_url)
+                if response.status_code != 200:
+                    continue
+
+                # Parse XML sitemap
+                content = response.text
+
+                # Extract URLs from sitemap
+                # Handle both regular sitemaps and sitemap indexes
+                loc_pattern = re.compile(r'<loc>\s*(.*?)\s*</loc>', re.IGNORECASE)
+                for match in loc_pattern.finditer(content):
+                    url = match.group(1).strip()
+                    if url.startswith(base_url.replace('www.', '').replace('https://', 'https://www.')):
+                        urls.add(url)
+                    elif url.startswith(base_url):
+                        urls.add(url)
+                    # Handle sitemap index - recursively fetch nested sitemaps
+                    elif url.endswith('.xml'):
+                        nested_urls = await self._parse_nested_sitemap(url)
+                        urls.update(nested_urls)
+
+                if urls:
+                    logger.info(f"Parsed sitemap: {sitemap_url}")
+                    break
+
+            except Exception as e:
+                logger.debug(f"Failed to parse sitemap {sitemap_url}: {e}")
+
+        return urls
+
+    async def _parse_nested_sitemap(self, sitemap_url: str) -> Set[str]:
+        """Parse a nested sitemap from sitemap index."""
+        urls = set()
+        try:
+            response = await self.http_client.get(sitemap_url)
+            if response.status_code == 200:
+                loc_pattern = re.compile(r'<loc>\s*(.*?)\s*</loc>', re.IGNORECASE)
+                for match in loc_pattern.finditer(response.text):
+                    url = match.group(1).strip()
+                    if not url.endswith('.xml'):
+                        urls.add(url)
+        except Exception as e:
+            logger.debug(f"Failed to parse nested sitemap {sitemap_url}: {e}")
+        return urls
+
+    def _extract_navigation_links(self, soup: BeautifulSoup, base_url: str) -> Set[str]:
+        """Extract links from navigation, header, and footer."""
+        urls = set()
+        base_domain = urlparse(base_url).netloc
+
+        # Look for navigation, header, and footer links
+        nav_elements = soup.find_all(['nav', 'header', 'footer'])
+
+        # Also look for common navigation class names
+        nav_elements.extend(soup.find_all(class_=re.compile(
+            r'nav|menu|header|footer|navigation|main-menu|site-nav',
+            re.I
+        )))
+
+        for nav in nav_elements:
+            for link in nav.find_all('a', href=True):
+                href = link['href']
+                full_url = urljoin(base_url, href)
+
+                # Only include same-domain links
+                if urlparse(full_url).netloc == base_domain:
+                    # Skip anchor links, javascript, mailto, etc.
+                    if not any(x in href for x in ['#', 'javascript:', 'mailto:', 'tel:']):
+                        urls.add(full_url.rstrip('/'))
+
+        return urls
+
+    async def _crawl_and_get_soup(self, url: str, research: BrandResearch) -> Optional[BeautifulSoup]:
+        """Crawl a page and return the soup for further processing."""
+        try:
+            response = await self.http_client.get(url)
+            if response.status_code != 200:
+                return None
+
+            soup = BeautifulSoup(response.text, 'html.parser')
+
+            # Also process this as a regular page
+            self.visited_urls.add(url.rstrip('/'))
+            content = self._extract_page_content(soup, 'homepage')
+            if content and len(content) > 100:
+                research.raw_content['homepage'] = content
+                research.pages_crawled.append(url)
+            self._extract_meta_info(soup, research)
+
+            return soup
+
+        except Exception as e:
+            logger.debug(f"Failed to crawl {url}: {e}")
+            return None
+
+    def _prioritize_urls(self, urls: List[str], max_urls: int = 25) -> List[str]:
+        """Prioritize URLs based on relevance keywords."""
+        def get_priority(url: str) -> int:
+            url_lower = url.lower()
+            priority = 0
+            for i, keyword in enumerate(self.PRIORITY_KEYWORDS):
+                if keyword in url_lower:
+                    # Earlier keywords in list = higher priority
+                    priority += (len(self.PRIORITY_KEYWORDS) - i)
+            return priority
+
+        # Sort by priority (highest first)
+        sorted_urls = sorted(urls, key=get_priority, reverse=True)
+
+        # Return top N urls, but ensure we don't miss low-priority unique pages
+        return sorted_urls[:max_urls]
 
     async def _crawl_page(self, url: str, research: BrandResearch) -> None:
         """Crawl a single page and extract content."""

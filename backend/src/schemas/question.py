@@ -69,6 +69,10 @@ class SmartQuestionGenerateRequest(BaseModel):
         default=None,
         description="Specific intents to focus on: discovery, comparison, evaluation, feature, problem_solving, review, pricing"
     )
+    additional_urls: Optional[List[str]] = Field(
+        default=None,
+        description="Additional URLs to crawl (for small websites or specific pages like /blog, /docs)"
+    )
 
 
 class SmartQuestionResponse(BaseModel):
