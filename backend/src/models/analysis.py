@@ -39,6 +39,18 @@ class AnalysisResult(Base):
     # Competitor mentions
     competitor_mentions = Column(JSON, default=dict)  # {"competitor_name": {"count": 1, "sentiment": "positive"}}
 
+    # Enhanced citation analysis (Phase 2)
+    brand_attributed_citations = Column(Integer, default=0)  # Citations that mention the brand
+    citation_quality = Column(JSON, default=dict)  # {"avg_authority": 0.7, "source_types": {"review_site": 2, "news": 1}}
+
+    # Context analysis (Phase 3)
+    mention_type_breakdown = Column(JSON, default=dict)  # {"recommendation": 3, "criticism": 1, "comparison": 2, "neutral": 1}
+    comparison_stats = Column(JSON, default=dict)  # {"total": 2, "wins": 1, "losses": 0, "draws": 1, "targets": {"Competitor": 2}}
+
+    # Aspect-based sentiment (Phase 4)
+    aspect_sentiments = Column(JSON, default=list)  # [{"aspect": "pricing", "label": "negative", "score": -0.5}]
+    dominant_aspect = Column(String(50), nullable=True)  # Most discussed aspect
+
     # Timestamps
     analyzed_at = Column(DateTime, default=datetime.utcnow)
 

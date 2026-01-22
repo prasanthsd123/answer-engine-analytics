@@ -19,12 +19,38 @@ class Citation:
 
 
 @dataclass
+class EnhancedCitation:
+    """Citation with source attribution and quality metrics."""
+    url: str
+    domain: str
+    title: Optional[str] = None
+    snippet: Optional[str] = None
+    reference_number: Optional[int] = None
+    mentions_brand: bool = False
+    brand_context: Optional[str] = None  # Text context where brand appears near this citation
+    source_type: str = "other"  # review_site, news, blog, community, official, other
+    authority_score: float = 0.5  # 0-1 based on domain reputation
+
+
+@dataclass
 class CitationStats:
     """Statistics about citations in a response."""
     total_citations: int
     unique_domains: int
     domains: Dict[str, int]  # domain -> count
     citations: List[Citation]
+
+
+@dataclass
+class EnhancedCitationStats:
+    """Enhanced statistics with source attribution."""
+    total_citations: int
+    unique_domains: int
+    domains: Dict[str, int]
+    citations: List[EnhancedCitation]
+    brand_attributed_count: int  # Citations that mention the brand
+    source_type_breakdown: Dict[str, int]  # source_type -> count
+    avg_authority_score: float
 
 
 class CitationParser:
@@ -264,3 +290,263 @@ class CitationParser:
                     continue
 
         return citations
+
+    def classify_source_type(self, domain: str) -> str:
+        """
+        Classify the type of source based on domain.
+
+        Args:
+            domain: Website domain
+
+        Returns:
+            Source type: review_site, news, blog, community, official, other
+        """
+        domain_lower = domain.lower()
+
+        # Review sites - high value for brand tracking
+        review_sites = {
+            'g2.com', 'capterra.com', 'trustpilot.com', 'trustradius.com',
+            'getapp.com', 'softwareadvice.com', 'yelp.com', 'tripadvisor.com',
+            'glassdoor.com', 'gartner.com', 'forrester.com', 'cnet.com',
+            'pcmag.com', 'tomsguide.com', 'techradar.com', 'wirecutter.com'
+        }
+
+        # News sites - authoritative coverage
+        news_sites = {
+            'techcrunch.com', 'wired.com', 'theverge.com', 'forbes.com',
+            'bloomberg.com', 'reuters.com', 'wsj.com', 'nytimes.com',
+            'bbc.com', 'cnn.com', 'venturebeat.com', 'zdnet.com',
+            'arstechnica.com', 'engadget.com', 'mashable.com', 'businessinsider.com'
+        }
+
+        # Community/Social - user discussions
+        community_sites = {
+            'reddit.com', 'quora.com', 'stackoverflow.com', 'stackexchange.com',
+            'twitter.com', 'x.com', 'linkedin.com', 'facebook.com', 'medium.com',
+            'dev.to', 'hackernews.com', 'news.ycombinator.com'
+        }
+
+        # Check against known site types
+        for site in review_sites:
+            if site in domain_lower:
+                return "review_site"
+
+        for site in news_sites:
+            if site in domain_lower:
+                return "news"
+
+        for site in community_sites:
+            if site in domain_lower:
+                return "community"
+
+        # Check for blog patterns
+        if 'blog' in domain_lower:
+            return "blog"
+
+        # Check for official documentation/government/education
+        if '.gov' in domain_lower:
+            return "official"
+        if '.edu' in domain_lower:
+            return "official"
+
+        return "other"
+
+    def calculate_authority_score(self, domain: str, source_type: str) -> float:
+        """
+        Calculate an authority score for a domain.
+
+        Args:
+            domain: Website domain
+            source_type: Already classified source type
+
+        Returns:
+            Authority score from 0.0 to 1.0
+        """
+        domain_lower = domain.lower()
+
+        # High authority domains with specific scores
+        high_authority = {
+            # Review sites
+            'g2.com': 0.95,
+            'capterra.com': 0.90,
+            'gartner.com': 0.95,
+            'forrester.com': 0.95,
+            'trustpilot.com': 0.85,
+            'trustradius.com': 0.85,
+            # News
+            'techcrunch.com': 0.90,
+            'forbes.com': 0.90,
+            'bloomberg.com': 0.95,
+            'reuters.com': 0.95,
+            'wired.com': 0.85,
+            'theverge.com': 0.85,
+            # Reference
+            'wikipedia.org': 0.80,
+        }
+
+        # Check for exact domain match
+        for auth_domain, score in high_authority.items():
+            if auth_domain in domain_lower:
+                return score
+
+        # Default scores by source type
+        type_scores = {
+            "review_site": 0.80,
+            "news": 0.75,
+            "official": 0.85,
+            "community": 0.50,
+            "blog": 0.45,
+            "other": 0.40
+        }
+
+        return type_scores.get(source_type, 0.40)
+
+    def attribute_citations_to_mentions(
+        self,
+        content: str,
+        citations: List[Citation],
+        brand_name: str
+    ) -> List[EnhancedCitation]:
+        """
+        Determine which citations are associated with brand mentions.
+
+        Strategy:
+        1. Find all brand mention positions in the text
+        2. Find all citation reference positions ([1], [2]) in the text
+        3. Associate citations with nearby brand mentions (within proximity threshold)
+        4. Classify source types and calculate authority scores
+
+        Args:
+            content: Full response text
+            citations: List of Citation objects
+            brand_name: Brand name to search for
+
+        Returns:
+            List of EnhancedCitation objects with attribution data
+        """
+        enhanced = []
+
+        if not content or not brand_name:
+            # Return basic enhanced citations without attribution
+            for idx, c in enumerate(citations):
+                source_type = self.classify_source_type(c.domain)
+                enhanced.append(EnhancedCitation(
+                    url=c.url,
+                    domain=c.domain,
+                    title=c.title,
+                    snippet=c.snippet,
+                    reference_number=c.reference_number or (idx + 1),
+                    mentions_brand=False,
+                    source_type=source_type,
+                    authority_score=self.calculate_authority_score(c.domain, source_type)
+                ))
+            return enhanced
+
+        # Find brand mention positions (case-insensitive)
+        brand_pattern = re.compile(re.escape(brand_name), re.IGNORECASE)
+        brand_positions = [m.start() for m in brand_pattern.finditer(content)]
+
+        # Find citation reference positions [1], [2], etc.
+        ref_pattern = r'\[(\d+)\]'
+        ref_positions = {}  # ref_number -> list of positions
+        for match in re.finditer(ref_pattern, content):
+            ref_num = int(match.group(1))
+            if ref_num not in ref_positions:
+                ref_positions[ref_num] = []
+            ref_positions[ref_num].append(match.start())
+
+        # Process each citation
+        proximity_threshold = 300  # Characters
+
+        for idx, c in enumerate(citations):
+            ref_num = c.reference_number or (idx + 1)
+            source_type = self.classify_source_type(c.domain)
+            authority = self.calculate_authority_score(c.domain, source_type)
+
+            mentions_brand = False
+            brand_context = None
+
+            # Check if this citation's reference is near a brand mention
+            if ref_num in ref_positions:
+                for ref_pos in ref_positions[ref_num]:
+                    for brand_pos in brand_positions:
+                        distance = abs(ref_pos - brand_pos)
+                        if distance < proximity_threshold:
+                            mentions_brand = True
+                            # Extract context around both positions
+                            start = max(0, min(ref_pos, brand_pos) - 75)
+                            end = min(len(content), max(ref_pos, brand_pos) + 75)
+                            brand_context = content[start:end].strip()
+                            break
+                    if mentions_brand:
+                        break
+
+            # Also check if the citation URL or title mentions the brand
+            if not mentions_brand:
+                if brand_name.lower() in c.url.lower():
+                    mentions_brand = True
+                    brand_context = f"Brand mentioned in URL: {c.url}"
+                elif c.title and brand_name.lower() in c.title.lower():
+                    mentions_brand = True
+                    brand_context = f"Brand mentioned in title: {c.title}"
+
+            enhanced.append(EnhancedCitation(
+                url=c.url,
+                domain=c.domain,
+                title=c.title,
+                snippet=c.snippet,
+                reference_number=ref_num,
+                mentions_brand=mentions_brand,
+                brand_context=brand_context,
+                source_type=source_type,
+                authority_score=authority
+            ))
+
+        return enhanced
+
+    def get_enhanced_citation_stats(
+        self,
+        content: str,
+        citations: List[Citation],
+        brand_name: str
+    ) -> EnhancedCitationStats:
+        """
+        Get comprehensive citation statistics with source attribution.
+
+        Args:
+            content: Full response text
+            citations: List of Citation objects
+            brand_name: Brand name for attribution
+
+        Returns:
+            EnhancedCitationStats with full analysis
+        """
+        enhanced = self.attribute_citations_to_mentions(content, citations, brand_name)
+
+        # Calculate domain counts
+        domain_counts = {}
+        for c in enhanced:
+            domain_counts[c.domain] = domain_counts.get(c.domain, 0) + 1
+
+        # Calculate source type breakdown
+        type_breakdown = {}
+        for c in enhanced:
+            type_breakdown[c.source_type] = type_breakdown.get(c.source_type, 0) + 1
+
+        # Calculate average authority
+        avg_authority = 0.0
+        if enhanced:
+            avg_authority = sum(c.authority_score for c in enhanced) / len(enhanced)
+
+        # Count brand-attributed citations
+        brand_count = sum(1 for c in enhanced if c.mentions_brand)
+
+        return EnhancedCitationStats(
+            total_citations=len(enhanced),
+            unique_domains=len(domain_counts),
+            domains=domain_counts,
+            citations=enhanced,
+            brand_attributed_count=brand_count,
+            source_type_breakdown=type_breakdown,
+            avg_authority_score=round(avg_authority, 3)
+        )

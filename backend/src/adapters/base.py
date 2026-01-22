@@ -82,8 +82,17 @@ class BaseAIAdapter(ABC):
         """
         content = response.content
 
-        # Extract citations
-        citations = self.extract_citations(content)
+        # Extract citations from text content
+        text_citations = self.extract_citations(content)
+
+        # Extract platform-specific native citations (Perplexity, Gemini, etc.)
+        native_citations = self.extract_native_citations(response.raw_response)
+
+        # Extract markdown links with titles [text](url)
+        md_citations = self._extract_markdown_links(content)
+
+        # Merge all citations, preferring entries with more metadata
+        all_citations = self._merge_citations(text_citations, native_citations, md_citations)
 
         # Check if response is a list
         is_list, items = self._detect_list_response(content)
@@ -91,10 +100,89 @@ class BaseAIAdapter(ABC):
         return ParsedResponse(
             platform=response.platform,
             content=content,
-            citations=citations,
+            citations=all_citations,
             is_list_response=is_list,
             list_items=items
         )
+
+    def extract_native_citations(self, raw_response: Dict[str, Any]) -> List[Citation]:
+        """
+        Extract citations from platform-specific response format.
+        Override in subclasses for platforms that return native citations.
+
+        Args:
+            raw_response: Raw response dict from the API
+
+        Returns:
+            List of Citation objects from native format
+        """
+        return []
+
+    def _extract_markdown_links(self, content: str) -> List[Citation]:
+        """
+        Extract markdown links [title](url) with titles preserved.
+
+        Args:
+            content: Response text
+
+        Returns:
+            List of Citation objects with titles from markdown
+        """
+        pattern = r'\[([^\]]+)\]\((https?://[^)]+)\)'
+        citations = []
+        seen_urls = set()
+
+        for match in re.finditer(pattern, content):
+            title, url = match.groups()
+            url = url.rstrip('.,;:')
+
+            if url in seen_urls:
+                continue
+            seen_urls.add(url)
+
+            try:
+                parsed = urlparse(url)
+                citations.append(Citation(
+                    url=url,
+                    domain=parsed.netloc,
+                    title=title.strip()
+                ))
+            except Exception:
+                continue
+
+        return citations
+
+    def _merge_citations(self, *citation_lists: List[Citation]) -> List[Citation]:
+        """
+        Merge multiple citation lists, preferring entries with more metadata.
+
+        Args:
+            citation_lists: Variable number of citation lists to merge
+
+        Returns:
+            Merged list with duplicates removed, keeping best metadata
+        """
+        seen = {}
+
+        for citations in citation_lists:
+            for c in citations:
+                if c.url not in seen:
+                    seen[c.url] = c
+                else:
+                    # Prefer citation with title
+                    existing = seen[c.url]
+                    if c.title and not existing.title:
+                        seen[c.url] = c
+                    # Prefer citation with snippet
+                    elif c.snippet and not existing.snippet:
+                        seen[c.url] = Citation(
+                            url=existing.url,
+                            domain=existing.domain,
+                            title=existing.title or c.title,
+                            snippet=c.snippet
+                        )
+
+        return list(seen.values())
 
     def extract_citations(self, content: str) -> List[Citation]:
         """

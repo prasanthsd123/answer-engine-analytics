@@ -464,7 +464,14 @@ async def get_detailed_analysis(
                 "sentiment": analysis.sentiment,
                 "sentiment_score": analysis.sentiment_score,
                 "competitor_mentions": analysis.competitor_mentions or {},
-                "citations": analysis.citations or []
+                "citations": analysis.citations or [],
+                # Enhanced analysis fields
+                "brand_attributed_citations": analysis.brand_attributed_citations or 0,
+                "citation_quality": analysis.citation_quality or {},
+                "mention_type_breakdown": analysis.mention_type_breakdown or {},
+                "comparison_stats": analysis.comparison_stats or {},
+                "aspect_sentiments": analysis.aspect_sentiments or [],
+                "dominant_aspect": analysis.dominant_aspect
             }
 
             # Aggregate overall stats

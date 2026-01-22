@@ -3,7 +3,7 @@ Sentiment analysis service for brand mentions.
 """
 
 from typing import Optional, Dict, Any, List
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import re
 
 
@@ -14,6 +14,25 @@ class SentimentResult:
     score: float  # -1.0 to 1.0
     confidence: float  # 0.0 to 1.0
     context: Optional[str] = None
+
+
+@dataclass
+class AspectSentiment:
+    """Sentiment for a specific aspect (pricing, features, support, etc.)."""
+    aspect: str
+    label: str  # positive, negative, neutral
+    score: float  # -1.0 to 1.0
+    evidence: List[str] = field(default_factory=list)  # Text snippets showing this sentiment
+    mention_count: int = 0
+
+
+@dataclass
+class DetailedSentimentResult:
+    """Comprehensive sentiment analysis with aspect breakdown."""
+    overall: SentimentResult
+    aspects: List[AspectSentiment]
+    dominant_aspect: Optional[str] = None
+    aspect_summary: Dict[str, float] = field(default_factory=dict)  # aspect -> score
 
 
 class SentimentAnalyzer:
@@ -48,6 +67,52 @@ class SentimentAnalyzer:
         }
 
         self.negation_words = {'not', 'no', 'never', "n't", 'neither', 'nobody', 'nothing'}
+
+        # Aspect-specific keywords for aspect-based sentiment analysis
+        self.aspect_keywords = {
+            'pricing': {
+                'keywords': ['price', 'pricing', 'cost', 'expensive', 'cheap', 'affordable',
+                            'free', 'premium', 'plan', 'subscription', 'value', 'worth', 'budget'],
+                'positive': ['affordable', 'free', 'value', 'worth', 'reasonable', 'fair', 'budget-friendly'],
+                'negative': ['expensive', 'overpriced', 'costly', 'pricey', 'not worth']
+            },
+            'features': {
+                'keywords': ['feature', 'capability', 'functionality', 'option', 'tool',
+                            'function', 'ability', 'power', 'advanced'],
+                'positive': ['powerful', 'advanced', 'comprehensive', 'rich', 'extensive', 'robust'],
+                'negative': ['limited', 'lacking', 'basic', 'missing', 'incomplete']
+            },
+            'support': {
+                'keywords': ['support', 'help', 'service', 'customer', 'response', 'team',
+                            'documentation', 'docs', 'community'],
+                'positive': ['responsive', 'helpful', 'quick', 'excellent', 'friendly', 'knowledgeable'],
+                'negative': ['slow', 'unhelpful', 'unresponsive', 'poor', 'terrible', 'lacking']
+            },
+            'ease_of_use': {
+                'keywords': ['easy', 'simple', 'intuitive', 'user-friendly', 'complex', 'difficult',
+                            'learning curve', 'setup', 'onboarding', 'ui', 'interface', 'ux'],
+                'positive': ['easy', 'simple', 'intuitive', 'user-friendly', 'straightforward', 'clean'],
+                'negative': ['complex', 'difficult', 'confusing', 'complicated', 'steep learning curve', 'clunky']
+            },
+            'performance': {
+                'keywords': ['fast', 'slow', 'performance', 'speed', 'reliable', 'stable',
+                            'crash', 'bug', 'uptime', 'downtime', 'lag'],
+                'positive': ['fast', 'quick', 'reliable', 'stable', 'smooth', 'responsive'],
+                'negative': ['slow', 'buggy', 'crashes', 'unreliable', 'unstable', 'laggy', 'downtime']
+            },
+            'integration': {
+                'keywords': ['integration', 'integrate', 'connect', 'api', 'plugin', 'extension',
+                            'compatibility', 'sync', 'import', 'export'],
+                'positive': ['seamless', 'easy integration', 'compatible', 'connects well'],
+                'negative': ['incompatible', 'difficult to integrate', 'limited integrations']
+            },
+            'security': {
+                'keywords': ['security', 'secure', 'privacy', 'safe', 'encryption', 'compliance',
+                            'gdpr', 'soc2', 'data protection'],
+                'positive': ['secure', 'safe', 'encrypted', 'compliant', 'protected'],
+                'negative': ['insecure', 'vulnerable', 'breach', 'exposed', 'risk']
+            }
+        }
 
         if use_ml_model:
             self._load_model()
@@ -262,3 +327,177 @@ class SentimentAnalyzer:
             score=weighted_score,
             confidence=avg_confidence
         )
+
+    def analyze_with_aspects(
+        self,
+        text: str,
+        brand: str,
+        context_window: int = 150
+    ) -> DetailedSentimentResult:
+        """
+        Analyze sentiment with aspect-level breakdown.
+
+        For each aspect (pricing, features, support, etc.):
+        1. Find sentences mentioning both brand AND aspect keywords
+        2. Analyze sentiment of those sentences
+        3. Return aspect-level breakdown
+
+        Args:
+            text: Full text to analyze
+            brand: Brand name
+            context_window: Characters around brand mention
+
+        Returns:
+            DetailedSentimentResult with overall and aspect breakdown
+        """
+        # Get overall sentiment
+        overall = self.analyze_mention(text, brand, context_window)
+
+        # Split text into sentences for aspect analysis
+        sentences = re.split(r'[.!?]+', text)
+
+        # Analyze each aspect
+        aspect_results = []
+        aspect_scores = {}
+
+        for aspect_name, aspect_data in self.aspect_keywords.items():
+            aspect_sentences = []
+            evidence = []
+
+            # Find sentences containing brand AND aspect keywords
+            for sentence in sentences:
+                sentence_lower = sentence.lower()
+                brand_in_sentence = brand.lower() in sentence_lower
+
+                # Check if any aspect keyword is in sentence
+                has_aspect_keyword = any(
+                    kw in sentence_lower for kw in aspect_data['keywords']
+                )
+
+                if has_aspect_keyword:
+                    # Either brand is in sentence, or it's near brand mentions
+                    aspect_sentences.append(sentence.strip())
+                    if brand_in_sentence:
+                        evidence.append(sentence.strip()[:200])
+
+            if not aspect_sentences:
+                continue
+
+            # Calculate sentiment for this aspect
+            positive_count = 0
+            negative_count = 0
+
+            for sentence in aspect_sentences:
+                sentence_lower = sentence.lower()
+
+                # Check aspect-specific positive words
+                for pos_word in aspect_data['positive']:
+                    if pos_word in sentence_lower:
+                        positive_count += 1
+
+                # Check aspect-specific negative words
+                for neg_word in aspect_data['negative']:
+                    if neg_word in sentence_lower:
+                        negative_count += 1
+
+                # Also check general sentiment words
+                for word in self.positive_words:
+                    if word in sentence_lower:
+                        positive_count += 0.5
+
+                for word in self.negative_words:
+                    if word in sentence_lower:
+                        negative_count += 0.5
+
+            # Calculate aspect score
+            total = positive_count + negative_count
+            if total > 0:
+                aspect_score = (positive_count - negative_count) / total
+            else:
+                aspect_score = 0.0
+
+            # Determine label
+            if aspect_score > 0.2:
+                aspect_label = "positive"
+            elif aspect_score < -0.2:
+                aspect_label = "negative"
+            else:
+                aspect_label = "neutral"
+
+            aspect_results.append(AspectSentiment(
+                aspect=aspect_name,
+                label=aspect_label,
+                score=round(aspect_score, 3),
+                evidence=evidence[:3],  # Top 3 evidence snippets
+                mention_count=len(aspect_sentences)
+            ))
+
+            aspect_scores[aspect_name] = aspect_score
+
+        # Determine dominant aspect (most mentioned or strongest sentiment)
+        dominant_aspect = None
+        if aspect_results:
+            # Sort by mention count, then by absolute sentiment score
+            sorted_aspects = sorted(
+                aspect_results,
+                key=lambda x: (x.mention_count, abs(x.score)),
+                reverse=True
+            )
+            if sorted_aspects:
+                dominant_aspect = sorted_aspects[0].aspect
+
+        return DetailedSentimentResult(
+            overall=overall,
+            aspects=aspect_results,
+            dominant_aspect=dominant_aspect,
+            aspect_summary=aspect_scores
+        )
+
+    def get_aspect_summary_for_brand(
+        self,
+        texts: List[str],
+        brand: str
+    ) -> Dict[str, Dict[str, Any]]:
+        """
+        Aggregate aspect sentiment across multiple texts.
+
+        Args:
+            texts: List of texts to analyze
+            brand: Brand name
+
+        Returns:
+            Dict with aspect -> {avg_score, total_mentions, sentiment_label}
+        """
+        aspect_data = {aspect: {'scores': [], 'mentions': 0}
+                      for aspect in self.aspect_keywords.keys()}
+
+        for text in texts:
+            result = self.analyze_with_aspects(text, brand)
+
+            for aspect in result.aspects:
+                aspect_data[aspect.aspect]['scores'].append(aspect.score)
+                aspect_data[aspect.aspect]['mentions'] += aspect.mention_count
+
+        # Calculate aggregates
+        summary = {}
+        for aspect, data in aspect_data.items():
+            if data['scores']:
+                avg_score = sum(data['scores']) / len(data['scores'])
+            else:
+                avg_score = 0.0
+
+            if avg_score > 0.2:
+                label = "positive"
+            elif avg_score < -0.2:
+                label = "negative"
+            else:
+                label = "neutral"
+
+            summary[aspect] = {
+                'avg_score': round(avg_score, 3),
+                'total_mentions': data['mentions'],
+                'sentiment_label': label,
+                'sample_count': len(data['scores'])
+            }
+
+        return summary

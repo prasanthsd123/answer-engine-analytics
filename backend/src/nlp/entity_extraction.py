@@ -3,8 +3,31 @@ Entity extraction service for identifying brands, products, and features.
 """
 
 from typing import List, Dict, Optional, Set
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from enum import Enum
 import re
+
+
+class MentionType(str, Enum):
+    """Type of brand mention based on context."""
+    RECOMMENDATION = "recommendation"
+    CRITICISM = "criticism"
+    COMPARISON = "comparison"
+    NEUTRAL = "neutral"
+    FEATURE_HIGHLIGHT = "feature_highlight"
+
+
+@dataclass
+class ContextualMention:
+    """Brand mention with context classification."""
+    brand: str
+    context: str
+    mention_type: MentionType
+    position_in_text: int
+    comparison_target: Optional[str] = None  # Competitor being compared to
+    comparison_winner: Optional[str] = None  # Who "wins" the comparison
+    aspects_mentioned: List[str] = field(default_factory=list)  # pricing, features, support, etc.
+    confidence: float = 0.5
 
 
 @dataclass
@@ -259,3 +282,219 @@ class EntityExtractor:
                         results["competitors"][comp]["favorable"] = True
 
         return results
+
+    def extract_contextual_mentions(
+        self,
+        text: str,
+        brand_name: str,
+        competitors: Optional[List[str]] = None
+    ) -> List[ContextualMention]:
+        """
+        Extract mentions with context classification (recommendation, criticism, comparison, etc.).
+
+        Args:
+            text: Text to analyze
+            brand_name: Primary brand name
+            competitors: Optional list of competitor names
+
+        Returns:
+            List of ContextualMention objects with type classification
+        """
+        mentions = []
+        competitors = competitors or []
+
+        # Recommendation patterns
+        recommendation_patterns = [
+            r'(?:recommend|suggesting?|try|choose|go\s+with|opt\s+for|pick)\s+' + re.escape(brand_name),
+            re.escape(brand_name) + r'\s+(?:is\s+)?(?:the\s+)?(?:best|top|leading|excellent|great|ideal|perfect|recommended)',
+            r'(?:best\s+choice|top\s+pick|first\s+choice|go-to|standout)(?:[^.]*?)' + re.escape(brand_name),
+            r'(?:highly\s+recommend|strongly\s+suggest)(?:[^.]*?)' + re.escape(brand_name),
+        ]
+
+        # Criticism patterns
+        criticism_patterns = [
+            r'(?:avoid|don\'t\s+use|stay\s+away\s+from|skip)\s+' + re.escape(brand_name),
+            re.escape(brand_name) + r'\s+(?:is\s+)?(?:poor|bad|terrible|disappointing|lacking|limited|expensive|overpriced)',
+            r'(?:problems?\s+with|issues?\s+with|downsides?\s+of|drawbacks?\s+of)(?:[^.]*?)' + re.escape(brand_name),
+            re.escape(brand_name) + r'(?:[^.]*?)(?:falls\s+short|doesn\'t\s+deliver|fails\s+to)',
+        ]
+
+        # Comparison patterns
+        comparison_patterns = [
+            re.escape(brand_name) + r'\s+(?:vs\.?|versus|compared\s+to|or)\s+(\w+)',
+            r'(\w+)\s+(?:vs\.?|versus|compared\s+to|or)\s+' + re.escape(brand_name),
+            re.escape(brand_name) + r'\s+(?:is\s+)?(?:better|worse|faster|slower|cheaper|more\s+expensive)\s+than\s+(\w+)',
+            r'(\w+)\s+(?:is\s+)?(?:better|worse|faster|slower|cheaper|more\s+expensive)\s+than\s+' + re.escape(brand_name),
+        ]
+
+        # Feature highlight patterns
+        feature_patterns = [
+            re.escape(brand_name) + r'(?:[^.]*?)(?:offers?|provides?|includes?|features?|has)\s+(\w+(?:\s+\w+)?)',
+            re.escape(brand_name) + r'\'s\s+(\w+(?:\s+\w+)?)\s+(?:feature|capability|functionality)',
+        ]
+
+        # Aspect keywords
+        aspect_keywords = {
+            'pricing': ['price', 'pricing', 'cost', 'expensive', 'cheap', 'affordable', 'free', 'premium', 'plan', 'subscription'],
+            'features': ['feature', 'capability', 'functionality', 'option', 'tool', 'function'],
+            'support': ['support', 'help', 'service', 'customer', 'response', 'team'],
+            'ease_of_use': ['easy', 'simple', 'intuitive', 'user-friendly', 'complex', 'difficult', 'learning curve'],
+            'performance': ['fast', 'slow', 'performance', 'speed', 'reliable', 'stable', 'crash'],
+            'integration': ['integration', 'integrate', 'connect', 'api', 'plugin', 'extension'],
+            'security': ['security', 'secure', 'privacy', 'safe', 'encryption', 'compliance'],
+        }
+
+        # Find brand in text
+        brand_pattern = re.compile(re.escape(brand_name), re.IGNORECASE)
+
+        for match in brand_pattern.finditer(text):
+            position = match.start()
+
+            # Get context (200 chars before and after)
+            start = max(0, position - 200)
+            end = min(len(text), match.end() + 200)
+            context = text[start:end].strip()
+
+            # Classify mention type
+            mention_type = MentionType.NEUTRAL
+            confidence = 0.5
+            comparison_target = None
+            comparison_winner = None
+
+            # Check recommendation patterns
+            for pattern in recommendation_patterns:
+                if re.search(pattern, context, re.IGNORECASE):
+                    mention_type = MentionType.RECOMMENDATION
+                    confidence = 0.8
+                    break
+
+            # Check criticism patterns (if not already classified)
+            if mention_type == MentionType.NEUTRAL:
+                for pattern in criticism_patterns:
+                    if re.search(pattern, context, re.IGNORECASE):
+                        mention_type = MentionType.CRITICISM
+                        confidence = 0.8
+                        break
+
+            # Check comparison patterns (can override neutral)
+            if mention_type == MentionType.NEUTRAL:
+                for pattern in comparison_patterns:
+                    comp_match = re.search(pattern, context, re.IGNORECASE)
+                    if comp_match:
+                        mention_type = MentionType.COMPARISON
+                        confidence = 0.75
+                        # Extract comparison target
+                        if comp_match.groups():
+                            potential_target = comp_match.group(1)
+                            # Verify it's a known competitor
+                            for comp in competitors:
+                                if comp.lower() in potential_target.lower():
+                                    comparison_target = comp
+                                    break
+                            if not comparison_target:
+                                comparison_target = potential_target
+                        break
+
+            # Check feature patterns (can override neutral)
+            if mention_type == MentionType.NEUTRAL:
+                for pattern in feature_patterns:
+                    if re.search(pattern, context, re.IGNORECASE):
+                        mention_type = MentionType.FEATURE_HIGHLIGHT
+                        confidence = 0.7
+                        break
+
+            # Determine comparison winner if it's a comparison
+            if mention_type == MentionType.COMPARISON and comparison_target:
+                winner_patterns = [
+                    (re.escape(brand_name) + r'\s+(?:is\s+)?(?:better|superior|preferred|wins)', brand_name),
+                    (re.escape(comparison_target) + r'\s+(?:is\s+)?(?:better|superior|preferred|wins)', comparison_target),
+                    (r'(?:choose|recommend|prefer)\s+' + re.escape(brand_name), brand_name),
+                    (r'(?:choose|recommend|prefer)\s+' + re.escape(comparison_target), comparison_target),
+                ]
+                for pattern, winner in winner_patterns:
+                    if re.search(pattern, context, re.IGNORECASE):
+                        comparison_winner = winner
+                        break
+
+            # Extract aspects mentioned
+            aspects_found = []
+            context_lower = context.lower()
+            for aspect, keywords in aspect_keywords.items():
+                for keyword in keywords:
+                    if keyword in context_lower:
+                        aspects_found.append(aspect)
+                        break
+
+            mentions.append(ContextualMention(
+                brand=brand_name,
+                context=context,
+                mention_type=mention_type,
+                position_in_text=position,
+                comparison_target=comparison_target,
+                comparison_winner=comparison_winner,
+                aspects_mentioned=aspects_found,
+                confidence=confidence
+            ))
+
+        return mentions
+
+    def get_mention_type_summary(
+        self,
+        mentions: List[ContextualMention]
+    ) -> Dict[str, any]:
+        """
+        Summarize mention types for analytics.
+
+        Args:
+            mentions: List of contextual mentions
+
+        Returns:
+            Dict with type counts and comparison stats
+        """
+        summary = {
+            "total": len(mentions),
+            "by_type": {
+                "recommendation": 0,
+                "criticism": 0,
+                "comparison": 0,
+                "neutral": 0,
+                "feature_highlight": 0
+            },
+            "comparison_stats": {
+                "total_comparisons": 0,
+                "wins": 0,
+                "losses": 0,
+                "draws": 0,
+                "targets": {}
+            },
+            "aspects": {}
+        }
+
+        for mention in mentions:
+            # Count by type
+            summary["by_type"][mention.mention_type.value] += 1
+
+            # Track comparisons
+            if mention.mention_type == MentionType.COMPARISON:
+                summary["comparison_stats"]["total_comparisons"] += 1
+                if mention.comparison_winner:
+                    if mention.comparison_winner == mention.brand:
+                        summary["comparison_stats"]["wins"] += 1
+                    else:
+                        summary["comparison_stats"]["losses"] += 1
+                else:
+                    summary["comparison_stats"]["draws"] += 1
+
+                if mention.comparison_target:
+                    target = mention.comparison_target
+                    if target not in summary["comparison_stats"]["targets"]:
+                        summary["comparison_stats"]["targets"][target] = 0
+                    summary["comparison_stats"]["targets"][target] += 1
+
+            # Count aspects
+            for aspect in mention.aspects_mentioned:
+                if aspect not in summary["aspects"]:
+                    summary["aspects"][aspect] = 0
+                summary["aspects"][aspect] += 1
+
+        return summary

@@ -13,7 +13,20 @@ import {
   X,
   MessageSquare,
   Target,
-  BarChart3
+  BarChart3,
+  TrendingUp,
+  TrendingDown,
+  Award,
+  ThumbsUp,
+  ThumbsDown,
+  Scale,
+  Star,
+  Shield,
+  Zap,
+  DollarSign,
+  HeadphonesIcon,
+  Puzzle,
+  MousePointerClick
 } from "lucide-react";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
@@ -22,6 +35,14 @@ import { brandApi, analysisApi } from "@/lib/api";
 import { cn, getSentimentColor } from "@/lib/utils";
 
 const PLATFORMS = ["chatgpt", "perplexity"] as const;
+
+interface AspectSentiment {
+  aspect: string;
+  label: string;
+  score: number;
+  evidence?: string[];
+  mention_count?: number;
+}
 
 interface QuestionAnalysis {
   question_id: string;
@@ -37,6 +58,28 @@ interface QuestionAnalysis {
       sentiment_score: number;
       competitor_mentions: { [key: string]: { count: number } };
       citations: { url: string; domain: string; title?: string }[];
+      // Enhanced analysis fields
+      brand_attributed_citations?: number;
+      citation_quality?: {
+        avg_authority: number;
+        source_types: { [key: string]: number };
+      };
+      mention_type_breakdown?: {
+        recommendation: number;
+        criticism: number;
+        comparison: number;
+        neutral: number;
+        feature_highlight: number;
+      };
+      comparison_stats?: {
+        total: number;
+        wins: number;
+        losses: number;
+        draws: number;
+        targets: { [key: string]: number };
+      };
+      aspect_sentiments?: AspectSentiment[];
+      dominant_aspect?: string;
     };
   };
 }
@@ -51,10 +94,27 @@ interface DetailedAnalysis {
     overall_sentiment: string;
     overall_position_avg: number | null;
     brand_share_of_voice: number;
+    // Enhanced summary fields
+    avg_citation_authority?: number;
+    total_brand_attributed_citations?: number;
+    mention_context_totals?: {
+      recommendation: number;
+      criticism: number;
+      comparison: number;
+      neutral: number;
+      feature_highlight: number;
+    };
+    comparison_totals?: {
+      wins: number;
+      losses: number;
+      draws: number;
+    };
   };
   by_question: QuestionAnalysis[];
-  citation_sources: { domain: string; count: number; percentage: number }[];
+  citation_sources: { domain: string; count: number; percentage: number; source_type?: string; authority_score?: number }[];
   competitor_summary: { [key: string]: { total_mentions: number; share_of_voice: number } };
+  // Aggregated aspect sentiment across all responses
+  aspect_sentiment_summary?: { [aspect: string]: { avg_score: number; total_mentions: number; label: string } };
 }
 
 export default function AnalysisPage() {
@@ -139,6 +199,95 @@ export default function AnalysisPage() {
         return "bg-gray-100 text-gray-800";
     }
   };
+
+  const getAspectIcon = (aspect: string) => {
+    switch (aspect) {
+      case "pricing":
+        return <DollarSign className="w-4 h-4" />;
+      case "features":
+        return <Zap className="w-4 h-4" />;
+      case "support":
+        return <HeadphonesIcon className="w-4 h-4" />;
+      case "ease_of_use":
+        return <MousePointerClick className="w-4 h-4" />;
+      case "performance":
+        return <TrendingUp className="w-4 h-4" />;
+      case "integration":
+        return <Puzzle className="w-4 h-4" />;
+      case "security":
+        return <Shield className="w-4 h-4" />;
+      default:
+        return <Star className="w-4 h-4" />;
+    }
+  };
+
+  const getSourceTypeColor = (sourceType: string) => {
+    switch (sourceType) {
+      case "review_site":
+        return "bg-yellow-100 text-yellow-800";
+      case "news":
+        return "bg-blue-100 text-blue-800";
+      case "community":
+        return "bg-purple-100 text-purple-800";
+      case "official":
+        return "bg-green-100 text-green-800";
+      case "blog":
+        return "bg-orange-100 text-orange-800";
+      default:
+        return "bg-gray-100 text-gray-800";
+    }
+  };
+
+  // Calculate aggregated mention context from by_question data
+  const aggregatedMentionContext = detailedAnalysis?.by_question?.reduce(
+    (acc, q) => {
+      Object.values(q.platforms).forEach((platform) => {
+        if (platform.mention_type_breakdown) {
+          acc.recommendation += platform.mention_type_breakdown.recommendation || 0;
+          acc.criticism += platform.mention_type_breakdown.criticism || 0;
+          acc.comparison += platform.mention_type_breakdown.comparison || 0;
+          acc.neutral += platform.mention_type_breakdown.neutral || 0;
+          acc.feature_highlight += platform.mention_type_breakdown.feature_highlight || 0;
+        }
+      });
+      return acc;
+    },
+    { recommendation: 0, criticism: 0, comparison: 0, neutral: 0, feature_highlight: 0 }
+  );
+
+  // Calculate aggregated comparison stats
+  const aggregatedComparisonStats = detailedAnalysis?.by_question?.reduce(
+    (acc, q) => {
+      Object.values(q.platforms).forEach((platform) => {
+        if (platform.comparison_stats) {
+          acc.wins += platform.comparison_stats.wins || 0;
+          acc.losses += platform.comparison_stats.losses || 0;
+          acc.draws += platform.comparison_stats.draws || 0;
+        }
+      });
+      return acc;
+    },
+    { wins: 0, losses: 0, draws: 0 }
+  );
+
+  // Calculate aggregated aspect sentiments
+  const aggregatedAspectSentiments = detailedAnalysis?.by_question?.reduce(
+    (acc: { [key: string]: { scores: number[]; mentions: number } }, q) => {
+      Object.values(q.platforms).forEach((platform) => {
+        if (platform.aspect_sentiments) {
+          platform.aspect_sentiments.forEach((asp) => {
+            if (!acc[asp.aspect]) {
+              acc[asp.aspect] = { scores: [], mentions: 0 };
+            }
+            acc[asp.aspect].scores.push(asp.score);
+            acc[asp.aspect].mentions += asp.mention_count || 1;
+          });
+        }
+      });
+      return acc;
+    },
+    {}
+  );
 
   return (
     <div className="p-8">
@@ -307,7 +456,167 @@ export default function AnalysisPage() {
         </div>
       )}
 
-      {/* Citation Sources */}
+      {/* Mention Context Breakdown */}
+      {aggregatedMentionContext && (
+        aggregatedMentionContext.recommendation > 0 ||
+        aggregatedMentionContext.criticism > 0 ||
+        aggregatedMentionContext.comparison > 0
+      ) && (
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
+          {/* Mention Type Distribution */}
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <MessageSquare className="w-5 h-5" />
+                Mention Context Analysis
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="space-y-4">
+                {[
+                  { key: "recommendation", label: "Recommendations", icon: <ThumbsUp className="w-4 h-4 text-green-600" />, color: "bg-green-500" },
+                  { key: "criticism", label: "Criticisms", icon: <ThumbsDown className="w-4 h-4 text-red-600" />, color: "bg-red-500" },
+                  { key: "comparison", label: "Comparisons", icon: <Scale className="w-4 h-4 text-blue-600" />, color: "bg-blue-500" },
+                  { key: "feature_highlight", label: "Feature Highlights", icon: <Star className="w-4 h-4 text-yellow-600" />, color: "bg-yellow-500" },
+                  { key: "neutral", label: "Neutral", icon: <MessageSquare className="w-4 h-4 text-gray-600" />, color: "bg-gray-400" },
+                ].map((item) => {
+                  const count = aggregatedMentionContext[item.key as keyof typeof aggregatedMentionContext] || 0;
+                  const total = Object.values(aggregatedMentionContext).reduce((a, b) => a + b, 0);
+                  const percentage = total > 0 ? (count / total) * 100 : 0;
+
+                  return count > 0 ? (
+                    <div key={item.key} className="flex items-center gap-3">
+                      <div className="flex items-center gap-2 w-40">
+                        {item.icon}
+                        <span className="text-sm font-medium">{item.label}</span>
+                      </div>
+                      <div className="flex-1">
+                        <div className="w-full bg-gray-200 rounded-full h-3">
+                          <div
+                            className={cn("h-3 rounded-full transition-all", item.color)}
+                            style={{ width: `${percentage}%` }}
+                          />
+                        </div>
+                      </div>
+                      <span className="text-sm text-gray-600 w-20 text-right">
+                        {count} ({percentage.toFixed(0)}%)
+                      </span>
+                    </div>
+                  ) : null;
+                })}
+              </div>
+            </CardContent>
+          </Card>
+
+          {/* Comparison Win/Loss */}
+          {aggregatedComparisonStats && (
+            aggregatedComparisonStats.wins > 0 ||
+            aggregatedComparisonStats.losses > 0 ||
+            aggregatedComparisonStats.draws > 0
+          ) && (
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <Award className="w-5 h-5" />
+                  Competitive Comparisons
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="grid grid-cols-3 gap-4 mb-4">
+                  <div className="text-center p-4 bg-green-50 rounded-lg">
+                    <p className="text-3xl font-bold text-green-600">{aggregatedComparisonStats.wins}</p>
+                    <p className="text-sm text-green-700">Wins</p>
+                  </div>
+                  <div className="text-center p-4 bg-gray-50 rounded-lg">
+                    <p className="text-3xl font-bold text-gray-600">{aggregatedComparisonStats.draws}</p>
+                    <p className="text-sm text-gray-700">Draws</p>
+                  </div>
+                  <div className="text-center p-4 bg-red-50 rounded-lg">
+                    <p className="text-3xl font-bold text-red-600">{aggregatedComparisonStats.losses}</p>
+                    <p className="text-sm text-red-700">Losses</p>
+                  </div>
+                </div>
+                <p className="text-sm text-gray-500 text-center">
+                  When AI compares your brand to competitors, these are the outcomes
+                </p>
+              </CardContent>
+            </Card>
+          )}
+        </div>
+      )}
+
+      {/* Aspect Sentiment Grid */}
+      {aggregatedAspectSentiments && Object.keys(aggregatedAspectSentiments).length > 0 && (
+        <Card className="mb-6">
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <BarChart3 className="w-5 h-5" />
+              Aspect-Based Sentiment Analysis
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
+              {Object.entries(aggregatedAspectSentiments).map(([aspect, data]) => {
+                const avgScore = data.scores.length > 0
+                  ? data.scores.reduce((a, b) => a + b, 0) / data.scores.length
+                  : 0;
+                const label = avgScore > 0.2 ? "positive" : avgScore < -0.2 ? "negative" : "neutral";
+
+                return (
+                  <div
+                    key={aspect}
+                    className={cn(
+                      "p-4 rounded-lg border-2",
+                      label === "positive" && "bg-green-50 border-green-200",
+                      label === "negative" && "bg-red-50 border-red-200",
+                      label === "neutral" && "bg-gray-50 border-gray-200"
+                    )}
+                  >
+                    <div className="flex items-center gap-2 mb-2">
+                      <span className={cn(
+                        "p-1.5 rounded",
+                        label === "positive" && "bg-green-100 text-green-600",
+                        label === "negative" && "bg-red-100 text-red-600",
+                        label === "neutral" && "bg-gray-100 text-gray-600"
+                      )}>
+                        {getAspectIcon(aspect)}
+                      </span>
+                      <span className="font-medium capitalize text-sm">
+                        {aspect.replace(/_/g, " ")}
+                      </span>
+                    </div>
+                    <div className="flex items-center justify-between">
+                      <span className={cn(
+                        "text-lg font-bold",
+                        label === "positive" && "text-green-600",
+                        label === "negative" && "text-red-600",
+                        label === "neutral" && "text-gray-600"
+                      )}>
+                        {avgScore > 0 ? "+" : ""}{avgScore.toFixed(2)}
+                      </span>
+                      <span className="text-xs text-gray-500">
+                        {data.mentions} mentions
+                      </span>
+                    </div>
+                    <div className="mt-2 flex items-center gap-1">
+                      {label === "positive" && <TrendingUp className="w-3 h-3 text-green-600" />}
+                      {label === "negative" && <TrendingDown className="w-3 h-3 text-red-600" />}
+                      <span className={cn(
+                        "text-xs capitalize",
+                        getSentimentBadgeColor(label)
+                      )}>
+                        {label}
+                      </span>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Citation Sources (Enhanced) */}
       {detailedAnalysis?.citation_sources && detailedAnalysis.citation_sources.length > 0 && (
         <Card className="mb-6">
           <CardHeader>
@@ -320,8 +629,25 @@ export default function AnalysisPage() {
                   <span className="text-sm text-gray-500 w-6">{idx + 1}.</span>
                   <div className="flex-1">
                     <div className="flex items-center justify-between mb-1">
-                      <span className="text-sm font-medium">{source.domain}</span>
-                      <span className="text-sm text-gray-500">{source.count} citations ({source.percentage}%)</span>
+                      <div className="flex items-center gap-2">
+                        <span className="text-sm font-medium">{source.domain}</span>
+                        {source.source_type && (
+                          <span className={cn(
+                            "px-2 py-0.5 rounded text-xs capitalize",
+                            getSourceTypeColor(source.source_type)
+                          )}>
+                            {source.source_type.replace(/_/g, " ")}
+                          </span>
+                        )}
+                      </div>
+                      <div className="flex items-center gap-2">
+                        {source.authority_score && (
+                          <span className="text-xs text-gray-400" title="Authority Score">
+                            ★ {(source.authority_score * 100).toFixed(0)}
+                          </span>
+                        )}
+                        <span className="text-sm text-gray-500">{source.count} citations ({source.percentage}%)</span>
+                      </div>
                     </div>
                     <div className="w-full bg-gray-200 rounded-full h-2">
                       <div

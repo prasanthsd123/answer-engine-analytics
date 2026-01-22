@@ -7,6 +7,9 @@ from typing import List
 
 import httpx
 
+from typing import Dict, Any
+from urllib.parse import urlparse
+
 from .base import BaseAIAdapter, AIResponse, Citation
 from ..config import settings
 
@@ -94,36 +97,48 @@ class PerplexityAdapter(BaseAIAdapter):
                 response_time_ms=response_time
             )
 
-    def extract_citations(self, content: str) -> List[Citation]:
+    def extract_native_citations(self, raw_response: Dict[str, Any]) -> List[Citation]:
         """
-        Extract citations from Perplexity response.
-        Perplexity includes citations in a specific format.
+        Extract citations from Perplexity's native response format.
+
+        Perplexity returns a 'citations' array in the API response when
+        return_citations=True is set. This method extracts those native
+        citations which are more accurate than text-based URL extraction.
+
+        Args:
+            raw_response: Raw response dict from Perplexity API
+
+        Returns:
+            List of Citation objects from Perplexity's citations array
         """
-        # First, use the parent class method to extract URLs
-        citations = super().extract_citations(content)
-
-        # Perplexity often formats citations as [1], [2], etc.
-        # The raw response may contain a 'citations' field
-        # This would be handled when parsing the raw_response
-
-        return citations
-
-    def parse_perplexity_citations(self, raw_response: dict) -> List[Citation]:
-        """Parse citations from Perplexity's response format."""
         citations = []
 
-        # Perplexity returns citations in the response
-        if "citations" in raw_response:
-            for idx, url in enumerate(raw_response["citations"]):
-                try:
-                    from urllib.parse import urlparse
-                    parsed = urlparse(url)
-                    citations.append(Citation(
-                        url=url,
-                        domain=parsed.netloc,
-                        title=f"Source {idx + 1}"
-                    ))
-                except Exception:
+        if not raw_response or "citations" not in raw_response:
+            return citations
+
+        for idx, url in enumerate(raw_response["citations"]):
+            try:
+                # Clean the URL
+                url = url.strip()
+                if not url:
                     continue
 
+                parsed = urlparse(url)
+                citations.append(Citation(
+                    url=url,
+                    domain=parsed.netloc,
+                    title=f"[{idx + 1}]"  # Perplexity uses numbered references
+                ))
+            except Exception:
+                continue
+
         return citations
+
+    def extract_citations(self, content: str) -> List[Citation]:
+        """
+        Extract citations from Perplexity response text.
+
+        This extracts URLs embedded in the text content. Native citations
+        from the API response are handled separately by extract_native_citations().
+        """
+        return super().extract_citations(content)

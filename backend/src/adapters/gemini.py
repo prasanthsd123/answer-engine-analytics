@@ -6,7 +6,10 @@ import time
 
 import google.generativeai as genai
 
-from .base import BaseAIAdapter, AIResponse
+from typing import Dict, Any, List
+from urllib.parse import urlparse
+
+from .base import BaseAIAdapter, AIResponse, Citation
 from ..config import settings
 
 
@@ -176,3 +179,38 @@ class GeminiGroundedAdapter(BaseAIAdapter):
                 raw_response={"error": str(e)},
                 response_time_ms=response_time
             )
+
+    def extract_native_citations(self, raw_response: Dict[str, Any]) -> List[Citation]:
+        """
+        Extract citations from Gemini's grounding chunks.
+
+        When using Google Search grounding, Gemini returns grounding_chunks
+        containing URIs and titles of sources used to generate the response.
+
+        Args:
+            raw_response: Raw response dict from Gemini API
+
+        Returns:
+            List of Citation objects from grounding chunks
+        """
+        citations = []
+
+        if not raw_response or "grounding_chunks" not in raw_response:
+            return citations
+
+        for chunk in raw_response["grounding_chunks"]:
+            try:
+                uri = chunk.get("uri", "")
+                if not uri:
+                    continue
+
+                parsed = urlparse(uri)
+                citations.append(Citation(
+                    url=uri,
+                    domain=parsed.netloc,
+                    title=chunk.get("title")
+                ))
+            except Exception:
+                continue
+
+        return citations

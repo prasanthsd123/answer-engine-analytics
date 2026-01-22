@@ -25,9 +25,9 @@ from ..adapters.chatgpt import ChatGPTAdapter
 from ..adapters.claude import ClaudeAdapter
 from ..adapters.perplexity import PerplexityAdapter
 from ..adapters.gemini import GeminiAdapter
-from ..nlp.sentiment import SentimentAnalyzer
-from ..nlp.citation_parser import CitationParser, Citation
-from ..nlp.entity_extraction import EntityExtractor
+from ..nlp.sentiment import SentimentAnalyzer, AspectSentiment, DetailedSentimentResult
+from ..nlp.citation_parser import CitationParser, Citation, EnhancedCitation, EnhancedCitationStats
+from ..nlp.entity_extraction import EntityExtractor, ContextualMention, MentionType
 from ..config import settings
 
 
@@ -245,7 +245,7 @@ class AnalysisRunner:
         # Count total recommendations in list
         total_recommendations = self.entity_extractor.count_total_recommendations(content)
 
-        # Enhanced citation analysis
+        # Basic citation analysis
         citation_stats = self.citation_parser.parse_all_citations(content)
         citations = [
             {"url": c.url, "domain": c.domain, "title": c.title}
@@ -253,10 +253,14 @@ class AnalysisRunner:
         ]
         citation_count = citation_stats.total_citations
 
-        # Extract competitor mentions
-        competitor_mentions = {}
+        # Get competitor names for analysis
+        competitor_names = []
         if hasattr(brand, 'competitors') and brand.competitors:
             competitor_names = [c.name for c in brand.competitors]
+
+        # Extract competitor mentions
+        competitor_mentions = {}
+        if competitor_names:
             comp_mention_data = self.entity_extractor.extract_competitor_mentions(
                 content, competitor_names, context_window=100
             )
@@ -266,7 +270,43 @@ class AnalysisRunner:
                     "contexts": mention_info.contexts[:3]  # Store up to 3 contexts
                 }
 
-        # Create analysis result
+        # === ENHANCED ANALYSIS (Phases 2-4) ===
+
+        # Phase 2: Enhanced citation analysis with source attribution
+        enhanced_citation_stats = self.citation_parser.get_enhanced_citation_stats(
+            content, citation_stats.citations, brand.name
+        )
+        brand_attributed_citations = enhanced_citation_stats.brand_attributed_count
+        citation_quality = {
+            "avg_authority": enhanced_citation_stats.avg_authority_score,
+            "source_types": enhanced_citation_stats.source_type_breakdown
+        }
+
+        # Phase 3: Contextual mention analysis
+        contextual_mentions = self.entity_extractor.extract_contextual_mentions(
+            content, brand.name, competitor_names
+        )
+        mention_summary = self.entity_extractor.get_mention_type_summary(contextual_mentions)
+        mention_type_breakdown = mention_summary.get("by_type", {})
+        comparison_stats = mention_summary.get("comparison_stats", {})
+
+        # Phase 4: Aspect-based sentiment analysis
+        detailed_sentiment = self.sentiment_analyzer.analyze_with_aspects(
+            content, brand.name
+        )
+        aspect_sentiments = [
+            {
+                "aspect": asp.aspect,
+                "label": asp.label,
+                "score": asp.score,
+                "evidence": asp.evidence[:2],  # Store top 2 evidence snippets
+                "mention_count": asp.mention_count
+            }
+            for asp in detailed_sentiment.aspects
+        ]
+        dominant_aspect = detailed_sentiment.dominant_aspect
+
+        # Create analysis result with enhanced data
         analysis = AnalysisResult(
             execution_id=execution_id,
             brand_mentioned=brand_mentioned,
@@ -279,7 +319,14 @@ class AnalysisRunner:
             total_recommendations=total_recommendations,
             citations=citations,
             citation_count=citation_count,
-            competitor_mentions=competitor_mentions
+            competitor_mentions=competitor_mentions,
+            # Enhanced fields
+            brand_attributed_citations=brand_attributed_citations,
+            citation_quality=citation_quality,
+            mention_type_breakdown=mention_type_breakdown,
+            comparison_stats=comparison_stats,
+            aspect_sentiments=aspect_sentiments,
+            dominant_aspect=dominant_aspect
         )
         db.add(analysis)
 
