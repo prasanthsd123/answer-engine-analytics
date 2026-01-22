@@ -26,7 +26,8 @@ from ..adapters.claude import ClaudeAdapter
 from ..adapters.perplexity import PerplexityAdapter
 from ..adapters.gemini import GeminiAdapter
 from ..nlp.sentiment import SentimentAnalyzer
-from ..nlp.citation_parser import CitationParser
+from ..nlp.citation_parser import CitationParser, Citation
+from ..nlp.entity_extraction import EntityExtractor
 from ..config import settings
 
 
@@ -36,6 +37,7 @@ class AnalysisRunner:
     def __init__(self):
         self.sentiment_analyzer = SentimentAnalyzer()
         self.citation_parser = CitationParser()
+        self.entity_extractor = EntityExtractor()
         self.adapters: Dict[str, BaseAIAdapter] = {}
         self._init_adapters()
 
@@ -82,10 +84,13 @@ class AnalysisRunner:
             Summary of analysis results
         """
         async with AsyncSessionLocal() as db:
-            # Get brand with questions
+            # Get brand with questions and competitors
             result = await db.execute(
                 select(Brand)
-                .options(selectinload(Brand.questions))
+                .options(
+                    selectinload(Brand.questions),
+                    selectinload(Brand.competitors)
+                )
                 .where(Brand.id == brand_id)
             )
             brand = result.scalar_one_or_none()
@@ -188,8 +193,13 @@ class AnalysisRunner:
             "platform": platform,
             "execution_id": str(execution.id),
             "brand_mentioned": analysis.brand_mentioned if analysis else False,
+            "mention_count": analysis.mention_count if analysis else 0,
             "sentiment": analysis.sentiment if analysis else None,
-            "position": analysis.position if analysis else None
+            "sentiment_score": analysis.sentiment_score if analysis else 0,
+            "position": analysis.position if analysis else None,
+            "total_in_list": analysis.total_recommendations if analysis else None,
+            "citation_count": analysis.citation_count if analysis else 0,
+            "competitor_mentions": analysis.competitor_mentions if analysis else {}
         }
 
     async def _analyze_response(
@@ -199,19 +209,27 @@ class AnalysisRunner:
         brand: Brand,
         content: str
     ) -> Optional[AnalysisResult]:
-        """Analyze AI response for brand mentions and sentiment."""
+        """Analyze AI response for brand mentions, competitors, citations, and sentiment."""
         if not content:
             return None
 
-        # Check for brand mention
-        brand_pattern = re.compile(re.escape(brand.name), re.IGNORECASE)
-        mentions = brand_pattern.findall(content)
-        brand_mentioned = len(mentions) > 0
-        mention_count = len(mentions)
+        # Extract brand mentions with context
+        brand_mention_data = self.entity_extractor.extract_brand_mentions(
+            content, brand.name, context_window=100
+        )
+        brand_mentioned = brand_mention_data.count > 0
+        mention_count = brand_mention_data.count
+
+        # Store mention contexts (up to 5)
+        mention_contexts = [
+            {"text": ctx, "position": pos}
+            for ctx, pos in zip(brand_mention_data.contexts[:5], brand_mention_data.positions[:5])
+        ]
 
         # Analyze sentiment around brand mentions
         sentiment = "neutral"
         sentiment_score = 0.0
+        sentiment_confidence = 0.0
 
         if brand_mentioned:
             sentiment_result = self.sentiment_analyzer.analyze_mention(
@@ -219,22 +237,49 @@ class AnalysisRunner:
             )
             sentiment = sentiment_result.label
             sentiment_score = sentiment_result.score
+            sentiment_confidence = getattr(sentiment_result, 'confidence', 0.0)
 
         # Find position in lists (if applicable)
         position = self._find_brand_position(content, brand.name)
 
-        # Extract citations
-        citations = self.citation_parser.extract_urls(content)
+        # Count total recommendations in list
+        total_recommendations = self.entity_extractor.count_total_recommendations(content)
+
+        # Enhanced citation analysis
+        citation_stats = self.citation_parser.parse_all_citations(content)
+        citations = [
+            {"url": c.url, "domain": c.domain, "title": c.title}
+            for c in citation_stats.citations
+        ]
+        citation_count = citation_stats.total_citations
+
+        # Extract competitor mentions
+        competitor_mentions = {}
+        if hasattr(brand, 'competitors') and brand.competitors:
+            competitor_names = [c.name for c in brand.competitors]
+            comp_mention_data = self.entity_extractor.extract_competitor_mentions(
+                content, competitor_names, context_window=100
+            )
+            for comp_name, mention_info in comp_mention_data.items():
+                competitor_mentions[comp_name] = {
+                    "count": mention_info.count,
+                    "contexts": mention_info.contexts[:3]  # Store up to 3 contexts
+                }
 
         # Create analysis result
         analysis = AnalysisResult(
             execution_id=execution_id,
             brand_mentioned=brand_mentioned,
             mention_count=mention_count,
+            mention_contexts=mention_contexts,
             sentiment=sentiment,
             sentiment_score=sentiment_score,
+            sentiment_confidence=sentiment_confidence,
             position=position,
-            citations=citations
+            total_recommendations=total_recommendations,
+            citations=citations,
+            citation_count=citation_count,
+            competitor_mentions=competitor_mentions
         )
         db.add(analysis)
 
@@ -263,7 +308,7 @@ class AnalysisRunner:
         db: AsyncSession,
         brand_id: UUID
     ):
-        """Update or create daily metrics for the brand."""
+        """Update or create daily metrics for the brand with competitor analysis."""
         today = date.today()
 
         # Get today's executions and analyses
@@ -285,6 +330,9 @@ class AnalysisRunner:
         total_mentions = 0
         sentiment_scores = []
         platform_data = {}
+        all_citations = []
+        competitor_totals = {}
+        positions = []
 
         for execution in executions:
             if execution.analysis:
@@ -292,6 +340,27 @@ class AnalysisRunner:
                     total_mentions += execution.analysis.mention_count or 0
                 if execution.analysis.sentiment_score is not None:
                     sentiment_scores.append(execution.analysis.sentiment_score)
+                if execution.analysis.position is not None:
+                    positions.append(execution.analysis.position)
+
+                # Aggregate competitor mentions for Share of Voice
+                if execution.analysis.competitor_mentions:
+                    for comp_name, data in execution.analysis.competitor_mentions.items():
+                        if isinstance(data, dict):
+                            count = data.get("count", 0)
+                        else:
+                            count = 0
+                        competitor_totals[comp_name] = competitor_totals.get(comp_name, 0) + count
+
+                # Collect all citations for ranking
+                if execution.analysis.citations:
+                    for citation in execution.analysis.citations:
+                        if isinstance(citation, dict):
+                            all_citations.append(Citation(
+                                url=citation.get("url", ""),
+                                domain=citation.get("domain", ""),
+                                title=citation.get("title")
+                            ))
 
                 # Track per platform
                 platform = execution.platform
@@ -299,7 +368,8 @@ class AnalysisRunner:
                     platform_data[platform] = {
                         "mentions": 0,
                         "queries": 0,
-                        "sentiment_scores": []
+                        "sentiment_scores": [],
+                        "positions": []
                     }
                 platform_data[platform]["queries"] += 1
                 if execution.analysis.brand_mentioned:
@@ -308,25 +378,38 @@ class AnalysisRunner:
                     platform_data[platform]["sentiment_scores"].append(
                         execution.analysis.sentiment_score
                     )
+                if execution.analysis.position is not None:
+                    platform_data[platform]["positions"].append(execution.analysis.position)
 
         # Calculate visibility score (0-100)
         total_queries = len(executions)
         mention_rate = total_mentions / total_queries if total_queries > 0 else 0
         sentiment_avg = sum(sentiment_scores) / len(sentiment_scores) if sentiment_scores else 0
+        position_avg = sum(positions) / len(positions) if positions else None
 
         # Visibility = mention_rate * 50 + sentiment_bonus * 50
         visibility_score = min(100, mention_rate * 50 + (sentiment_avg + 1) * 25)
 
-        # Calculate platform breakdown
+        # Calculate Share of Voice (brand mentions vs competitor mentions)
+        total_competitor_mentions = sum(competitor_totals.values())
+        total_all_mentions = total_mentions + total_competitor_mentions
+        share_of_voice = (total_mentions / total_all_mentions * 100) if total_all_mentions > 0 else 0
+
+        # Rank top citation sources
+        top_citations = self.citation_parser.rank_citation_sources(all_citations)[:10]
+
+        # Calculate platform breakdown with position averages
         platform_breakdown = {}
         for platform, data in platform_data.items():
             p_mention_rate = data["mentions"] / data["queries"] if data["queries"] > 0 else 0
             p_sentiment = sum(data["sentiment_scores"]) / len(data["sentiment_scores"]) if data["sentiment_scores"] else 0
+            p_position = sum(data["positions"]) / len(data["positions"]) if data["positions"] else None
             platform_breakdown[platform] = {
                 "mentions": data["mentions"],
                 "queries": data["queries"],
                 "visibility_score": min(100, p_mention_rate * 50 + (p_sentiment + 1) * 25),
-                "sentiment_avg": p_sentiment
+                "sentiment_avg": p_sentiment,
+                "position_avg": p_position
             }
 
         # Update or create daily metrics
@@ -342,7 +425,11 @@ class AnalysisRunner:
             daily_metrics.visibility_score = visibility_score
             daily_metrics.sentiment_avg = sentiment_avg
             daily_metrics.mention_count = total_mentions
+            daily_metrics.share_of_voice = share_of_voice
             daily_metrics.platform_breakdown = platform_breakdown
+            daily_metrics.top_citations = top_citations
+            daily_metrics.total_queries = total_queries
+            daily_metrics.successful_queries = sum(1 for e in executions if e.status == "completed")
         else:
             daily_metrics = DailyMetrics(
                 brand_id=brand_id,
@@ -350,7 +437,10 @@ class AnalysisRunner:
                 visibility_score=visibility_score,
                 sentiment_avg=sentiment_avg,
                 mention_count=total_mentions,
-                share_of_voice=0,  # Would need competitor data
-                platform_breakdown=platform_breakdown
+                share_of_voice=share_of_voice,
+                platform_breakdown=platform_breakdown,
+                top_citations=top_citations,
+                total_queries=total_queries,
+                successful_queries=sum(1 for e in executions if e.status == "completed")
             )
             db.add(daily_metrics)

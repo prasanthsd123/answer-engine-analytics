@@ -181,6 +181,20 @@ export const analysisApi = {
     );
     return response.data;
   },
+
+  getDetailedAnalysis: async (brandId: string, days = 7) => {
+    const response = await api.get(
+      `/api/analysis/brand/${brandId}/detailed?days=${days}`
+    );
+    return response.data;
+  },
+
+  getExecutionResponse: async (executionId: string) => {
+    const response = await api.get(
+      `/api/analysis/execution/${executionId}/response`
+    );
+    return response.data;
+  },
 };
 
 // Report APIs

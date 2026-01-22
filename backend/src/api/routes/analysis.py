@@ -384,3 +384,249 @@ async def run_analysis_sync(
     results = await runner.run_analysis(brand_id, platforms, max_questions)
 
     return results
+
+
+@router.get("/brand/{brand_id}/detailed")
+async def get_detailed_analysis(
+    brand_id: UUID,
+    days: int = Query(7, ge=1, le=30),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """
+    Get detailed per-question analysis with competitor mentions and citations.
+
+    Returns breakdown by question showing:
+    - Platform results (ChatGPT, Perplexity, etc.)
+    - Mention counts and positions
+    - Competitor mentions
+    - Citation sources
+    """
+    # Get brand with competitors
+    result = await db.execute(
+        select(Brand)
+        .options(selectinload(Brand.competitors))
+        .where(Brand.id == brand_id, Brand.user_id == current_user.id)
+    )
+    brand = result.scalar_one_or_none()
+    if not brand:
+        raise HTTPException(status_code=404, detail="Brand not found")
+
+    start_date = date.today() - timedelta(days=days)
+
+    # Get all executions with analysis for this brand
+    result = await db.execute(
+        select(QueryExecution)
+        .join(Question)
+        .options(
+            selectinload(QueryExecution.analysis),
+            selectinload(QueryExecution.question)
+        )
+        .where(
+            Question.brand_id == brand_id,
+            QueryExecution.executed_at >= start_date
+        )
+        .order_by(QueryExecution.executed_at.desc())
+    )
+    executions = result.scalars().all()
+
+    # Group by question
+    questions_data = {}
+    all_citations = []
+    competitor_totals = {}
+    total_brand_mentions = 0
+    sentiment_scores = []
+    positions = []
+
+    for execution in executions:
+        question = execution.question
+        analysis = execution.analysis
+
+        if not question:
+            continue
+
+        question_id = str(question.id)
+        if question_id not in questions_data:
+            questions_data[question_id] = {
+                "question_id": question_id,
+                "question_text": question.question_text,
+                "category": question.category,
+                "platforms": {}
+            }
+
+        if analysis:
+            # Track platform data for this question
+            questions_data[question_id]["platforms"][execution.platform] = {
+                "brand_mentioned": analysis.brand_mentioned,
+                "mention_count": analysis.mention_count or 0,
+                "position": analysis.position,
+                "total_in_list": analysis.total_recommendations,
+                "sentiment": analysis.sentiment,
+                "sentiment_score": analysis.sentiment_score,
+                "competitor_mentions": analysis.competitor_mentions or {},
+                "citations": analysis.citations or []
+            }
+
+            # Aggregate overall stats
+            if analysis.brand_mentioned:
+                total_brand_mentions += analysis.mention_count or 0
+            if analysis.sentiment_score is not None:
+                sentiment_scores.append(analysis.sentiment_score)
+            if analysis.position is not None:
+                positions.append(analysis.position)
+
+            # Aggregate competitor mentions
+            if analysis.competitor_mentions:
+                for comp_name, data in analysis.competitor_mentions.items():
+                    count = data.get("count", 0) if isinstance(data, dict) else 0
+                    competitor_totals[comp_name] = competitor_totals.get(comp_name, 0) + count
+
+            # Collect citations
+            if analysis.citations:
+                all_citations.extend(analysis.citations)
+
+    # Calculate citation source ranking
+    citation_domains = {}
+    for citation in all_citations:
+        domain = citation.get("domain", "") if isinstance(citation, dict) else ""
+        if domain:
+            citation_domains[domain] = citation_domains.get(domain, 0) + 1
+
+    total_citations = sum(citation_domains.values())
+    citation_sources = [
+        {
+            "domain": domain,
+            "count": count,
+            "percentage": round(count / total_citations * 100, 1) if total_citations > 0 else 0
+        }
+        for domain, count in sorted(citation_domains.items(), key=lambda x: x[1], reverse=True)
+    ][:15]  # Top 15 sources
+
+    # Calculate competitor summary with share of voice
+    total_all_mentions = total_brand_mentions + sum(competitor_totals.values())
+    competitor_summary = {}
+    for comp_name, mentions in competitor_totals.items():
+        competitor_summary[comp_name] = {
+            "total_mentions": mentions,
+            "share_of_voice": round(mentions / total_all_mentions * 100, 1) if total_all_mentions > 0 else 0
+        }
+
+    # Calculate overall summary
+    total_executions = len(executions)
+    mention_rate = total_brand_mentions / total_executions if total_executions > 0 else 0
+    overall_sentiment = "neutral"
+    if sentiment_scores:
+        avg_sentiment = sum(sentiment_scores) / len(sentiment_scores)
+        if avg_sentiment > 0.2:
+            overall_sentiment = "positive"
+        elif avg_sentiment < -0.2:
+            overall_sentiment = "negative"
+
+    return {
+        "brand_id": str(brand_id),
+        "brand_name": brand.name,
+        "summary": {
+            "total_questions_analyzed": len(questions_data),
+            "total_executions": total_executions,
+            "overall_mention_rate": round(mention_rate, 2),
+            "overall_sentiment": overall_sentiment,
+            "overall_position_avg": round(sum(positions) / len(positions), 1) if positions else None,
+            "brand_share_of_voice": round(total_brand_mentions / total_all_mentions * 100, 1) if total_all_mentions > 0 else 0
+        },
+        "by_question": list(questions_data.values()),
+        "citation_sources": citation_sources,
+        "competitor_summary": competitor_summary
+    }
+
+
+@router.get("/execution/{execution_id}/response")
+async def get_execution_response(
+    execution_id: UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """
+    Get raw AI response with highlighted brand and competitor mentions.
+
+    Returns the full response text with metadata about where the brand
+    and competitors are mentioned.
+    """
+    import re
+
+    # Get execution with analysis and related data
+    result = await db.execute(
+        select(QueryExecution)
+        .options(
+            selectinload(QueryExecution.analysis),
+            selectinload(QueryExecution.question)
+        )
+        .join(Question)
+        .join(Brand)
+        .where(
+            QueryExecution.id == execution_id,
+            Brand.user_id == current_user.id
+        )
+    )
+    execution = result.scalar_one_or_none()
+
+    if not execution:
+        raise HTTPException(status_code=404, detail="Execution not found")
+
+    # Get brand info for highlighting
+    result = await db.execute(
+        select(Brand)
+        .options(selectinload(Brand.competitors))
+        .join(Question)
+        .where(Question.id == execution.question_id)
+    )
+    brand = result.scalar_one_or_none()
+
+    response_text = execution.raw_response or ""
+    brand_highlights = []
+    competitor_highlights = []
+
+    # Find brand mentions with positions
+    if brand:
+        brand_pattern = re.compile(re.escape(brand.name), re.IGNORECASE)
+        for match in brand_pattern.finditer(response_text):
+            context_start = max(0, match.start() - 50)
+            context_end = min(len(response_text), match.end() + 50)
+            brand_highlights.append({
+                "start": match.start(),
+                "end": match.end(),
+                "text": match.group(),
+                "context": response_text[context_start:context_end]
+            })
+
+        # Find competitor mentions
+        if brand.competitors:
+            for competitor in brand.competitors:
+                comp_pattern = re.compile(re.escape(competitor.name), re.IGNORECASE)
+                for match in comp_pattern.finditer(response_text):
+                    context_start = max(0, match.start() - 50)
+                    context_end = min(len(response_text), match.end() + 50)
+                    competitor_highlights.append({
+                        "start": match.start(),
+                        "end": match.end(),
+                        "text": match.group(),
+                        "competitor_name": competitor.name,
+                        "context": response_text[context_start:context_end]
+                    })
+
+    return {
+        "execution_id": str(execution_id),
+        "platform": execution.platform,
+        "question": execution.question.question_text if execution.question else None,
+        "executed_at": execution.executed_at.isoformat() if execution.executed_at else None,
+        "response_text": response_text,
+        "response_length": len(response_text),
+        "brand_highlights": brand_highlights,
+        "competitor_highlights": competitor_highlights,
+        "citations_found": execution.analysis.citations if execution.analysis else [],
+        "analysis_summary": {
+            "brand_mentioned": execution.analysis.brand_mentioned if execution.analysis else False,
+            "mention_count": execution.analysis.mention_count if execution.analysis else 0,
+            "sentiment": execution.analysis.sentiment if execution.analysis else None,
+            "position": execution.analysis.position if execution.analysis else None
+        } if execution.analysis else None
+    }
