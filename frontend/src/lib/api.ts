@@ -130,6 +130,7 @@ export const questionApi = {
     num_questions?: number;
     research_website?: boolean;
     focus_intents?: string[];
+    additional_urls?: string[];
   }) => {
     const response = await api.post(
       `/api/questions/brand/${brandId}/generate-smart`,

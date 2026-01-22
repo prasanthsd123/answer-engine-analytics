@@ -126,32 +126,36 @@ Based on DEEP RESEARCH of this company's website, generate {num_questions} reali
 
 2. **Question Types to Generate** (distribute across these):
 
-   DISCOVERY (25%) - Generic category searches BEFORE knowing the brand:
+   DISCOVERY (40%) - Generic category searches BEFORE knowing the brand:
    - "best [specific product category] for [specific industry found]"
    - "top [category] tools for [persona/role found]"
    - "[specific problem from use cases] solutions"
+   - "what is the best [category] software"
+   - "[category] recommendations for [company size]"
+   - "top rated [category] tools"
+   These are the MOST IMPORTANT - real users search generically first!
 
-   COMPARISON (20%) - Comparing this brand with competitors:
+   COMPARISON (15%) - Comparing this brand with competitors:
    - "[brand] vs [competitor] for [specific use case]"
    - "compare [brand] and [competitor] [specific feature]"
    - "[competitor] alternative for [industry]"
 
-   EVALUATION (15%) - Deciding if this product is right for them:
+   EVALUATION (12%) - Deciding if this product is right for them:
    - "is [brand] good for [specific industry found]"
    - "[brand] for [company size found - startup/SMB/enterprise]"
    - "should [persona] use [brand]"
 
-   FEATURE-SPECIFIC (15%) - Searching for specific capabilities:
+   FEATURE-SPECIFIC (12%) - Searching for specific capabilities:
    - "does [brand] have [actual feature from website]"
    - "[brand] [specific feature] capabilities"
    - "best [feature] tool like [brand]"
 
-   PROBLEM-SOLVING (10%) - User has a specific problem:
+   PROBLEM-SOLVING (8%) - User has a specific problem:
    - "how to [actual use case from website]"
    - "best way to [problem they solve]"
    - "[specific pain point] solution for [industry]"
 
-   INDUSTRY-SPECIFIC (10%) - Industry-focused searches:
+   INDUSTRY-SPECIFIC (8%) - Industry-focused searches:
    - "[brand] for [specific industry from customer list]"
    - "best [category] for [industry] companies"
    - "[industry] [product category] recommendations"
@@ -343,7 +347,17 @@ Generate diverse, realistic questions using the ACTUAL research data provided. R
         research: BrandResearch,
         competitors: List[str]
     ) -> List[GeneratedQuestion]:
-        """Fallback template-based generation using research data."""
+        """Fallback template-based generation using research data.
+
+        Distribution (matches AI prompt):
+        - Discovery: 40% (8 questions)
+        - Comparison: 15% (3 questions)
+        - Evaluation: 12% (2-3 questions)
+        - Feature: 12% (2-3 questions)
+        - Problem-solving: 8% (1-2 questions)
+        - Industry-specific: 8% (1-2 questions)
+        - Pricing: 5% (1 question)
+        """
         questions = []
         brand = research.brand_name
         industry = research.industry or "software"
@@ -353,80 +367,77 @@ Generate diverse, realistic questions using the ACTUAL research data provided. R
         personas = research.customer_personas or ["teams", "businesses"]
         features = research.features or []
         use_cases = research.use_cases or []
-        products = research.products or []
+        company_sizes = research.customer_company_sizes or ["small business", "enterprise"]
 
-        # Discovery questions using actual industries
-        for ind in customer_industries[:3]:
+        # === DISCOVERY (40% = 8 questions) - Most important! ===
+        # These are generic searches where the brand should naturally appear
+        questions.append(GeneratedQuestion(
+            f"best {industry} software", "discovery", "generic category search", 5
+        ))
+        questions.append(GeneratedQuestion(
+            f"top {industry} tools 2024", "discovery", "yearly best list", 5
+        ))
+        questions.append(GeneratedQuestion(
+            f"what is the best {industry} platform", "discovery", "platform search", 5
+        ))
+
+        for ind in customer_industries[:2]:
             questions.append(GeneratedQuestion(
-                f"best {industry} for {ind}",
-                "discovery", "finding category options", 4
+                f"best {industry} for {ind}", "discovery", "industry-specific discovery", 5
             ))
 
         for persona in personas[:2]:
             questions.append(GeneratedQuestion(
-                f"top {industry} tools for {persona}",
-                "discovery", "persona-based search", 4
+                f"top {industry} tools for {persona}", "discovery", "persona discovery", 4
             ))
 
-        # Use case based questions
-        for use_case in use_cases[:4]:
+        for size in company_sizes[:1]:
             questions.append(GeneratedQuestion(
-                f"how to {use_case}",
-                "problem_solving", "solving specific problem", 4
-            ))
-            questions.append(GeneratedQuestion(
-                f"best tool for {use_case}",
-                "discovery", "solution search", 4
+                f"{industry} recommendations for {size}", "discovery", "size-based discovery", 4
             ))
 
-        # Feature questions using actual features
-        for feature in features[:3]:
-            questions.append(GeneratedQuestion(
-                f"does {brand} have {feature}",
-                "feature", "capability check", 3
-            ))
-            questions.append(GeneratedQuestion(
-                f"best {feature} software",
-                "discovery", "feature-focused search", 3
-            ))
-
-        # Comparison questions with competitors
+        # === COMPARISON (15% = 3 questions) ===
         for comp in competitors[:3]:
             questions.append(GeneratedQuestion(
-                f"{brand} vs {comp}",
-                "comparison", "direct comparison", 5
+                f"{brand} vs {comp}", "comparison", "direct comparison", 5
             ))
-            if customer_industries:
-                questions.append(GeneratedQuestion(
-                    f"{brand} vs {comp} for {customer_industries[0]}",
-                    "comparison", "industry-specific comparison", 5
-                ))
 
-        # Evaluation questions
-        questions.extend([
-            GeneratedQuestion(f"is {brand} worth it", "evaluation", "value assessment", 4),
-            GeneratedQuestion(f"{brand} reviews", "review", "seeking opinions", 4),
-            GeneratedQuestion(f"should I use {brand}", "evaluation", "decision making", 4),
-        ])
+        # === EVALUATION (12% = 2-3 questions) ===
+        questions.append(GeneratedQuestion(
+            f"is {brand} good", "evaluation", "quality assessment", 4
+        ))
+        questions.append(GeneratedQuestion(
+            f"{brand} reviews", "evaluation", "seeking reviews", 4
+        ))
+        if customer_industries:
+            questions.append(GeneratedQuestion(
+                f"is {brand} good for {customer_industries[0]}",
+                "evaluation", "fit assessment", 4
+            ))
 
-        # Industry-specific questions
+        # === FEATURE-SPECIFIC (12% = 2-3 questions) ===
+        for feature in features[:2]:
+            questions.append(GeneratedQuestion(
+                f"does {brand} have {feature}", "feature", "capability check", 3
+            ))
+
+        # === PROBLEM-SOLVING (8% = 1-2 questions) ===
+        for use_case in use_cases[:2]:
+            questions.append(GeneratedQuestion(
+                f"best tool for {use_case}", "problem_solving", "solution search", 4
+            ))
+
+        # === INDUSTRY-SPECIFIC (8% = 1-2 questions) ===
         for ind in customer_industries[:2]:
             questions.append(GeneratedQuestion(
-                f"{brand} for {ind}",
+                f"best {industry} for {ind} companies",
                 "industry_specific", "industry fit", 4
             ))
 
-        # Pricing questions
-        if research.pricing_model:
-            questions.append(GeneratedQuestion(
-                f"{brand} pricing",
-                "pricing", "cost research", 3
-            ))
-        if research.pricing_tiers:
-            questions.append(GeneratedQuestion(
-                f"{brand} {research.pricing_tiers[0]} vs {research.pricing_tiers[-1] if len(research.pricing_tiers) > 1 else 'free'}",
-                "pricing", "tier comparison", 3
-            ))
+        # === PRICING (5% = 1 question) ===
+        questions.append(GeneratedQuestion(
+            f"{brand} pricing", "pricing", "cost research", 3
+        ))
 
         return questions[:20]
 

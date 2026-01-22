@@ -11,6 +11,7 @@ export default function QuestionsPage() {
   const [selectedBrandId, setSelectedBrandId] = useState<string>("");
   const [generationMode, setGenerationMode] = useState<"smart" | "template">("smart");
   const [numQuestions, setNumQuestions] = useState(20);
+  const [additionalUrls, setAdditionalUrls] = useState<string>("");
   const queryClient = useQueryClient();
 
   const { data: brandsData } = useQuery({
@@ -43,13 +44,22 @@ export default function QuestionsPage() {
 
   // Smart AI-powered generation
   const generateSmartMutation = useMutation({
-    mutationFn: () =>
-      questionApi.generateSmart(activeBrandId, {
+    mutationFn: () => {
+      // Parse additional URLs (comma or newline separated)
+      const urlList = additionalUrls
+        .split(/[,\n]/)
+        .map(url => url.trim())
+        .filter(url => url.length > 0);
+
+      return questionApi.generateSmart(activeBrandId, {
         num_questions: numQuestions,
         research_website: true,
-      }),
+        additional_urls: urlList.length > 0 ? urlList : undefined,
+      });
+    },
     onSuccess: (data) => {
       queryClient.invalidateQueries({ queryKey: ["questions", activeBrandId] });
+      setAdditionalUrls(""); // Clear after success
       // Show success message with research summary
       if (data.research_summary) {
         console.log("Research Summary:", data.research_summary);
@@ -195,8 +205,25 @@ export default function QuestionsPage() {
                     </div>
                   </div>
 
-                  <div className="text-xs text-gray-500 space-y-1">
-                    <p>Questions will include:</p>
+                  {/* Additional URLs input */}
+                  <div className="mt-4 pt-4 border-t border-gray-200">
+                    <label className="block text-sm font-medium text-gray-700 mb-1">
+                      Additional URLs (optional)
+                    </label>
+                    <textarea
+                      value={additionalUrls}
+                      onChange={(e) => setAdditionalUrls(e.target.value)}
+                      placeholder={`e.g., /blog, /docs, /case-studies\nor full URLs like https://example.com/pricing`}
+                      className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
+                      rows={2}
+                    />
+                    <p className="text-xs text-gray-400 mt-1">
+                      Add specific pages to crawl (comma or newline separated). Useful for small websites or specific content.
+                    </p>
+                  </div>
+
+                  <div className="text-xs text-gray-500 space-y-1 mt-4">
+                    <p>Questions will include (40% discovery, 15% comparison, etc.):</p>
                     <ul className="list-disc list-inside ml-2">
                       <li>Discovery questions (finding options in your category)</li>
                       <li>Comparison questions (your brand vs competitors)</li>
