@@ -7,9 +7,8 @@ Create Date: 2025-01-22
 """
 from typing import Sequence, Union
 
-from alembic import op
+from alembic import op, context
 import sqlalchemy as sa
-from sqlalchemy.dialects.postgresql import JSON
 
 # revision identifiers, used by Alembic.
 revision: str = '002_enhanced_analysis'
@@ -19,16 +18,25 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
+    # Detect database dialect
+    dialect = context.get_context().dialect.name
+
+    if dialect == 'postgresql':
+        from sqlalchemy.dialects.postgresql import JSON
+        json_type = JSON
+    else:
+        json_type = sa.JSON
+
     # Add enhanced citation analysis columns (Phase 2)
     op.add_column('analysis_results', sa.Column('brand_attributed_citations', sa.Integer, server_default='0'))
-    op.add_column('analysis_results', sa.Column('citation_quality', JSON, server_default='{}'))
+    op.add_column('analysis_results', sa.Column('citation_quality', json_type, server_default='{}'))
 
     # Add context analysis columns (Phase 3)
-    op.add_column('analysis_results', sa.Column('mention_type_breakdown', JSON, server_default='{}'))
-    op.add_column('analysis_results', sa.Column('comparison_stats', JSON, server_default='{}'))
+    op.add_column('analysis_results', sa.Column('mention_type_breakdown', json_type, server_default='{}'))
+    op.add_column('analysis_results', sa.Column('comparison_stats', json_type, server_default='{}'))
 
     # Add aspect-based sentiment columns (Phase 4)
-    op.add_column('analysis_results', sa.Column('aspect_sentiments', JSON, server_default='[]'))
+    op.add_column('analysis_results', sa.Column('aspect_sentiments', json_type, server_default='[]'))
     op.add_column('analysis_results', sa.Column('dominant_aspect', sa.String(50), nullable=True))
 
 
