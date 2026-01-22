@@ -19,8 +19,8 @@ from src.config import settings
 # Alembic Config object
 config = context.config
 
-# Set the database URL from settings
-config.set_main_option("sqlalchemy.url", settings.DATABASE_URL.replace("+asyncpg", ""))
+# Set the database URL from settings (keep asyncpg for async migrations)
+config.set_main_option("sqlalchemy.url", settings.DATABASE_URL)
 
 # Interpret the config file for Python logging
 if config.config_file_name is not None:
